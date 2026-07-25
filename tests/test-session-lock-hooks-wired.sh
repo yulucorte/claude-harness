@@ -34,8 +34,13 @@ assert any('session-heartbeat.sh' in c for c in prompt_cmds), 'session-heartbeat
 pre_cmds = cmds('PreToolUse')
 assert any('session-guardian.sh' in c for c in pre_cmds), 'session-guardian.sh not wired into PreToolUse'
 
-pre_group_matchers = [g.get('matcher') for g in h.get('PreToolUse', [])]
+pre_groups = h.get('PreToolUse', [])
+pre_group_matchers = [g.get('matcher') for g in pre_groups]
 assert 'Bash' in pre_group_matchers, 'PreToolUse for session-guardian.sh must matcher Bash'
+assert 'Write|Edit|NotebookEdit' in pre_group_matchers, 'PreToolUse for session-guardian.sh (file mode) must matcher Write|Edit|NotebookEdit'
+
+file_mode_cmds = [entry['command'] for g in pre_groups if g.get('matcher') == 'Write|Edit|NotebookEdit' for entry in g.get('hooks', [])]
+assert any('session-guardian.sh' in c for c in file_mode_cmds), 'session-guardian.sh not wired into the Write|Edit|NotebookEdit PreToolUse matcher'
 
 pre_compact_cmds = cmds('PreCompact')
 assert any('pre-compact.sh' in c for c in pre_compact_cmds), 'existing pre-compact.sh must stay untouched'

@@ -31,8 +31,15 @@ except Exception:
     sys.exit(0)
 
 sid = (payload.get("session_id") or "").strip()
-tool = (payload.get("tool_name") or "").strip()
-tool_input = payload.get("tool_input") or {}
+# Cada campo puede llegar con un tipo inesperado en un payload malformado;
+# degradamos a su valor vacio en vez de reventar -- un .strip()/.get() sobre
+# el tipo equivocado aqui tumbaba TODO el guardian (deny de tree-ops incluido),
+# porque estas lineas corren antes de llegar a cualquier regla. Mismo patron
+# que hooks/session-heartbeat.sh (commit 13d1d5d).
+tool = payload.get("tool_name")
+tool = tool.strip() if isinstance(tool, str) else ""
+tool_input = payload.get("tool_input")
+tool_input = tool_input if isinstance(tool_input, dict) else {}
 cmd = tool_input.get("command") or ""
 cwd = (payload.get("cwd") or "").strip()
 if not sid:
@@ -195,11 +202,15 @@ def worktree_root(path):
 # Comparo raices de worktree resueltas (no cwd crudo) por la misma razon que
 # la regla 0: un -C o un worktree enlazado pueden hacer que dos cwd distintos
 # sean la MISMA raiz fisica, o que el mismo cwd crudo ya no sea suficiente.
+# El archivo tambien se compara por ruta FISICA, no como string crudo: un
+# symlink, un 'a/../b' o un file_path relativo no deben esconder la colision.
 if mode == "file":
     try:
         my_root = worktree_root(os.path.realpath(cwd))
+        target_real = os.path.realpath(os.path.join(cwd, target))
     except Exception:
         sys.exit(0)
+    hits = []  # (lock del peer, ago) por cada entrada que coincide
     for d in foreign:
         peer_cwd = d.get("cwd")
         if not isinstance(peer_cwd, str):
@@ -217,26 +228,38 @@ if mode == "file":
         if not isinstance(entries, list):
             continue
         for e in entries:
-            if not isinstance(e, dict) or e.get("path") != target:
+            if not isinstance(e, dict):
+                continue
+            epath = e.get("path")
+            if not isinstance(epath, str):
+                continue  # tipo inesperado: nunca se avisa a ciegas
+            try:
+                if os.path.realpath(epath) != target_real:
+                    continue
+            except Exception:
                 continue
             try:
                 ago = int(now - float(e.get("ts") or 0))
             except Exception:
                 continue
-            if ago > TTL:
-                continue
-            msg = ("session-guardian: otra sesion viva en esta misma carpeta (candado %s) "
-                   "escribio '%s' hace %ss. Relee el archivo antes de editarlo: tu version "
-                   "en contexto puede estar desactualizada y tu escritura pisaria su cambio."
-                   % (d["_id"][:8], os.path.basename(target), ago))
-            print(json.dumps({
-                "systemMessage": "⚠️ " + msg,
-                "hookSpecificOutput": {
-                    "hookEventName": "PreToolUse",
-                    "additionalContext": msg,
-                }
-            }))
-            sys.exit(0)
+            if ago > TTL or ago < 0:
+                continue  # viejo, o con reloj adelantado: ambos se ignoran
+            hits.append((d, ago))
+    if hits:
+        # Mismo criterio que la regla 0: el candado MAS FRESCO decide a quien
+        # se nombra en el aviso -- nunca el primero que devuelva glob.glob().
+        freshest_d, ago = min(hits, key=lambda h: h[1])
+        msg = ("session-guardian: otra sesion viva en esta misma carpeta (candado %s) "
+               "escribio '%s' hace %ss. Relee el archivo antes de editarlo: tu version "
+               "en contexto puede estar desactualizada y tu escritura pisaria su cambio."
+               % (freshest_d["_id"][:8], os.path.basename(target), ago))
+        print(json.dumps({
+            "systemMessage": "⚠️ " + msg,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": msg,
+            }
+        }))
     sys.exit(0)
 
 actual_branch = git("branch", "--show-current").stdout.strip()
