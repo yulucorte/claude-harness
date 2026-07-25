@@ -15,7 +15,7 @@ fi
 [ -z "$STDIN_JSON" ] && exit 0
 
 SG_JSON="$STDIN_JSON" python3 - <<'PY'
-import sys, os, json, subprocess
+import sys, os, json, subprocess, time
 
 try:
     payload = json.loads(os.environ.get("SG_JSON") or "{}")
@@ -26,6 +26,15 @@ sid = (payload.get("session_id") or "").strip()
 if not sid:
     sys.exit(0)
 cwd = (payload.get("cwd") or "").strip() or os.environ.get("CLAUDE_PROJECT_ROOT") or os.getcwd()
+
+# Herramienta que acaba de ejecutarse. Solo las de escritura dejan rastro en el
+# lock: son las unicas que pueden pisar el trabajo de otra sesion.
+tool = (payload.get("tool_name") or "").strip()
+tool_input = payload.get("tool_input") or {}
+written = ""
+if tool in ("Write", "Edit", "NotebookEdit"):
+    written = (tool_input.get("file_path") or tool_input.get("notebook_path") or "").strip()
+
 if not os.path.isdir(cwd):
     sys.exit(0)
 
@@ -90,6 +99,18 @@ except Exception:
     rp = ""
 if rp and d.get("cwd") != rp:
     d["cwd"] = rp
+    changed = True
+
+# Archivos escritos recientemente por esta sesion. El guardian los usa para
+# avisar cuando dos sesiones de la misma carpeta editan lo mismo. Se acotan a
+# las 20 mas recientes, deduplicadas por ruta, para que el lock no crezca.
+if written:
+    prev = d.get("files")
+    if not isinstance(prev, list):
+        prev = []
+    files = [e for e in prev if isinstance(e, dict) and e.get("path") != written]
+    files.append({"path": written, "ts": int(time.time())})
+    d["files"] = files[-20:]
     changed = True
 
 if changed:
