@@ -95,8 +95,20 @@ fi
 CWD_OUT="$(pwd -P)"
 
 python3 -c "import json,sys
+# SessionStart se re-dispara con el MISMO session_id en compact/clear/resume
+# (ver hooks.json: matcher startup|resume|clear|compact). Si el lock ya existia
+# y ya traia una lista 'files' (la va acumulando el heartbeat en la Task 4), la
+# conservamos; si no existe, es ilegible, esta corrupto, o 'files' no es una
+# lista, degradamos en silencio a [] (lock nuevo).
+files = []
+try:
+    prev = json.load(open(sys.argv[6]))
+    if isinstance(prev.get('files'), list):
+        files = prev['files']
+except Exception:
+    pass
 data = {'branch': sys.argv[1], 'worktree': sys.argv[2], 'head': sys.argv[3],
-        'started_at': sys.argv[4], 'cwd': sys.argv[5], 'files': []}
+        'started_at': sys.argv[4], 'cwd': sys.argv[5], 'files': files}
 json.dump(data, open(sys.argv[6], 'w'))
 " "$LOCK_BRANCH_OUT" "$WT_OUT" "$HEAD_OUT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CWD_OUT" "$LOCK_DIR/$SESSION_ID.lock" 2>/dev/null || true
 

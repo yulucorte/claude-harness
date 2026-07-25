@@ -70,4 +70,60 @@ GOT=$(lock_field "$REAL/.git/slate-sessions/sess-legacy.lock" cwd)
 echo "PASS: el heartbeat rellena cwd en locks legados"
 rm -rf "$REPO"
 
+# --- 4. el lock preserva 'files' acumulado entre disparos del mismo session_id
+#        (SessionStart se re-dispara en compact/clear/resume con el mismo id) ---
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+echo '{"session_id":"sess-repeat"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null
+
+LOCK="$REAL/.git/slate-sessions/sess-repeat.lock"
+[ -f "$LOCK" ] || { echo "FAIL: no se creo el lock en $LOCK"; exit 1; }
+
+python3 -c "import json
+d = json.load(open('$LOCK'))
+d['files'] = ['src/foo.py', 'src/bar.py']
+json.dump(d, open('$LOCK', 'w'))
+"
+
+echo '{"session_id":"sess-repeat"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null
+
+FILES=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get('files','MISSING')))" "$LOCK")
+[ "$FILES" = '["src/foo.py", "src/bar.py"]' ] || { echo "FAIL: 'files' esperado acumulado tras 2do disparo, obtenido $FILES"; exit 1; }
+echo "PASS: el lock preserva 'files' acumulado entre disparos del mismo session_id"
+rm -rf "$REPO"
+
+# --- 5. un valor de 'files' que NO es una lista degrada a [] sin error ---
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+mkdir -p "$REAL/.git/slate-sessions"
+cat > "$REAL/.git/slate-sessions/sess-badfiles.lock" <<EOF
+{"branch": "main", "cwd": "$REAL", "worktree": "", "started_at": "2026-01-01T00:00:00Z", "files": "not-a-list"}
+EOF
+
+echo '{"session_id":"sess-badfiles"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null
+RC5=$?
+[ "$RC5" -eq 0 ] || { echo "FAIL: el hook no salio con codigo 0 ante 'files' no-lista"; exit 1; }
+
+FILES=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get('files','MISSING')))" "$REAL/.git/slate-sessions/sess-badfiles.lock")
+[ "$FILES" = "[]" ] || { echo "FAIL: 'files' no-lista deberia degradar a [], obtenido $FILES"; exit 1; }
+echo "PASS: un valor de 'files' no-lista degrada a [] sin error"
+rm -rf "$REPO"
+
+# --- 6. un lock con JSON corrupto no rompe el hook y 'files' arranca en [] ---
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+mkdir -p "$REAL/.git/slate-sessions"
+printf '{not valid json at all' > "$REAL/.git/slate-sessions/sess-corrupt.lock"
+
+echo '{"session_id":"sess-corrupt"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null
+RC6=$?
+[ "$RC6" -eq 0 ] || { echo "FAIL: el hook no salio con codigo 0 ante lock corrupto"; exit 1; }
+
+GOT=$(lock_field "$REAL/.git/slate-sessions/sess-corrupt.lock" cwd)
+[ "$GOT" = "$REAL" ] || { echo "FAIL: el hook no reescribio un lock valido sobre uno corrupto. cwd obtenido: $GOT"; exit 1; }
+FILES=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1])).get('files','MISSING')))" "$REAL/.git/slate-sessions/sess-corrupt.lock")
+[ "$FILES" = "[]" ] || { echo "FAIL: 'files' deberia arrancar en [] tras lock corrupto, obtenido $FILES"; exit 1; }
+echo "PASS: un lock con JSON corrupto no rompe el hook y 'files' arranca en []"
+rm -rf "$REPO"
+
 echo "All session-lock cwd tests passed."
