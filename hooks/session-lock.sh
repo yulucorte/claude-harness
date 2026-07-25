@@ -89,10 +89,16 @@ A partir de ahora, para CUALQUIER comando git (branch, commit, push, stash, etc.
   fi
 fi
 
+# Ruta FISICA de la carpeta de trabajo. El hook ya hizo `cd "$PROJECT_ROOT"` al
+# arrancar, asi que `pwd -P` es la raiz del proyecto con symlinks resueltos
+# (en macOS /var -> /private/var). El guardian compara carpetas por esta ruta.
+CWD_OUT="$(pwd -P)"
+
 python3 -c "import json,sys
-data = {'branch': sys.argv[1], 'worktree': sys.argv[2], 'head': sys.argv[3], 'started_at': sys.argv[4]}
-json.dump(data, open(sys.argv[5], 'w'))
-" "$LOCK_BRANCH_OUT" "$WT_OUT" "$HEAD_OUT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$LOCK_DIR/$SESSION_ID.lock" 2>/dev/null || true
+data = {'branch': sys.argv[1], 'worktree': sys.argv[2], 'head': sys.argv[3],
+        'started_at': sys.argv[4], 'cwd': sys.argv[5], 'files': []}
+json.dump(data, open(sys.argv[6], 'w'))
+" "$LOCK_BRANCH_OUT" "$WT_OUT" "$HEAD_OUT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CWD_OUT" "$LOCK_DIR/$SESSION_ID.lock" 2>/dev/null || true
 
 if [ -n "$CONTEXT" ]; then
   python3 -c "import json,sys

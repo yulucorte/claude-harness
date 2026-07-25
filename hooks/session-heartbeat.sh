@@ -81,6 +81,17 @@ if hd and d.get("head") != hd:
     d["head"] = hd
     changed = True
 
+# Carpeta fisica viva de esta sesion. Se refresca siempre: un lock escrito por
+# una version anterior no la tiene, y el guardian la necesita para saber si un
+# peer comparte carpeta con nosotros.
+try:
+    rp = os.path.realpath(cwd)
+except Exception:
+    rp = ""
+if rp and d.get("cwd") != rp:
+    d["cwd"] = rp
+    changed = True
+
 if changed:
     tmp = lock + ".tmp"
     try:
