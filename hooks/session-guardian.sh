@@ -173,6 +173,25 @@ FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
 # nada que proteger (por eso se respeta un -C/--work-tree explicito).
 tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
 if tree_ops:
+    _toplevel_cache = {}
+
+    def worktree_root(path):
+        # Memoizado: la misma carpeta nunca se resuelve dos veces en una
+        # invocacion. Sin esto, un comando con varios tree-ops identicos (o
+        # varios peers en la misma carpeta) dispara un "git rev-parse
+        # --show-toplevel" por cada uno; con git colgado, cada uno gasta su
+        # propio timeout=10 en vez de compartir un solo resultado.
+        if path in _toplevel_cache:
+            return _toplevel_cache[path]
+        r = git("rev-parse", "--show-toplevel", in_dir=path)
+        top = r.stdout.strip()
+        try:
+            result = os.path.realpath(top) if r.returncode == 0 and top else path
+        except Exception:
+            result = path
+        _toplevel_cache[path] = result
+        return result
+
     def resolve_target(raw_dir):
         # El objetivo crudo: -C/--work-tree si el comando lo trae (resuelto
         # relativo a esta sesion), si no, esta sesion misma.
@@ -189,52 +208,44 @@ if tree_ops:
         # 'git -C sub switch otra' cambio archivos FUERA de sub). Por eso se
         # resuelve a la raiz real del worktree; si falla (no es un repo, git
         # no disponible, etc.) se degrada al directorio crudo sin romper.
-        r = git("rev-parse", "--show-toplevel", in_dir=t)
-        top = r.stdout.strip()
-        if r.returncode == 0 and top:
-            try:
-                return os.path.realpath(top)
-            except Exception:
-                return t
-        return t
-
-    def same_tree(a, b):
-        # Contencion en vez de igualdad exacta: si una carpeta esta DENTRO de
-        # la otra (o son la misma), es la misma extension de arbol de trabajo
-        # -- ya sea porque mi objetivo cayo en una subcarpeta del peer, o
-        # porque el peer mismo trabaja desde una subcarpeta del repo (comun en
-        # monorepos). Carpetas realmente distintas no comparten prefijo.
-        if not a or not b:
-            return False
-        if a == b:
-            return True
-        return a.startswith(b + os.sep) or b.startswith(a + os.sep)
+        return worktree_root(t)
 
     # Un comando compuesto puede traer varios tree-ops con -C distintos; el de
-    # UNO no debe decidir el objetivo de OTRO (round 2, item 2), asi que cada
-    # ocurrencia se resuelve y se compara por separado.
+    # UNO no debe decidir el objetivo de OTRO (round 2, item 2). Se dedupean
+    # los -C/--work-tree crudos ANTES de resolver (y worktree_root() memoiza
+    # por carpeta), para no repetir el mismo subproceso por cada ocurrencia
+    # identica en el comando.
     targets = set()
-    for raw_dir in tree_hits:
+    for raw_dir in set(tree_hits):
         t = resolve_target(raw_dir)
         if t:
             targets.add(t)
 
+    # Se compara la RAIZ del worktree de cada peer contra mis objetivos -- NO
+    # contencion de carpetas. Un worktree enlazado ('git worktree add') puede
+    # vivir FISICAMENTE anidado dentro del repo principal y comparte
+    # slate-sessions/ (mismo git-common-dir), pero tiene su PROPIA raiz de
+    # arbol de trabajo: probado que un checkout en la raiz deja intactos los
+    # archivos del worktree enlazado anidado, y viceversa. Comparar por
+    # contencion los confundia con el mismo arbol y denegaba sin una colision
+    # real (round 3, item 1); comparar raices resueltas por igualdad los
+    # distingue, y de paso ya no importa si un -C cae en una subcarpeta simple
+    # (sin worktree propio): esa resuelve a la MISMA raiz que el resto del repo.
     matches = []
-    for t in targets:
-        for d in foreign:
-            peer_cwd = d.get("cwd")
-            if not isinstance(peer_cwd, str):
-                continue  # ausente o de tipo inesperado: nunca se deniega a ciegas
-            peer_cwd = peer_cwd.strip()
-            if not peer_cwd:
-                continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
-            try:
-                p = os.path.realpath(peer_cwd)
-            except Exception:
-                continue
-            if not same_tree(p, t):
-                continue  # carpetas realmente distintas: ya estan aislados
-            matches.append(d)
+    for d in foreign:
+        peer_cwd = d.get("cwd")
+        if not isinstance(peer_cwd, str):
+            continue  # ausente o de tipo inesperado: nunca se deniega a ciegas
+        peer_cwd = peer_cwd.strip()
+        if not peer_cwd:
+            continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
+        try:
+            p = os.path.realpath(peer_cwd)
+        except Exception:
+            continue
+        if worktree_root(p) not in targets:
+            continue  # raiz de worktree distinta: ya estan aislados
+        matches.append(d)
     if matches:
         # El peer MAS FRESCO decide el veredicto: si al menos uno esta vivo
         # con certeza, se deniega; solo se avisa si TODOS los que comparten

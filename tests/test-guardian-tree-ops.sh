@@ -207,16 +207,47 @@ is_deny "$OUT" || { echo "FAIL: 'git -C sub checkout' con un peer vivo en la RAI
 echo "PASS: 'git -C <subcarpeta-de-este-repo> checkout' denegado con un peer en la raiz"
 rm -rf "$REPO"
 
-# --- 14. comando compuesto: el primer tree-op apunta AFUERA, el segundo es LOCAL -> DENEGADO ---
+# --- 14. comando compuesto: el primer tree-op apunta a OTRO repo, el segundo es LOCAL -> DENEGADO ---
 # El -C de un tree-op no debe decidir el objetivo de OTRO tree-op en el mismo
-# comando. Aqui el primer 'checkout' apunta a /tmp (inofensivo), pero el
-# segundo es local (sin -C) y SI colisiona con el peer de esta carpeta.
+# comando. El primer operando tiene que ser un repo de verdad (no solo "/tmp"):
+# en Linux 'mktemp -d' crea carpetas DENTRO de /tmp (p.ej. /tmp/tmp.XXXX), asi
+# que "/tmp" contendria a $REPO y el caso pasaria por contencion sin ejercitar
+# nada. Un segundo repo real de 'setup_repo' no puede contener a $REPO en
+# NINGUNA plataforma. El segundo 'checkout' es local (sin -C) y SI colisiona.
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
+OTHER=$(setup_repo)
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git -C /tmp checkout -b x && git checkout -b y" | bash "$HOOK")
-is_deny "$OUT" || { echo "FAIL: el segundo tree-op (local, sin -C) no fue denegado aunque el primero apuntara afuera: $OUT"; exit 1; }
-echo "PASS: un tree-op local en un comando compuesto se denega aunque otro tree-op del mismo comando apunte afuera"
+OUT=$(payload "yo" "$REAL" "git -C $OTHER checkout -b x && git checkout -b y" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: el segundo tree-op (local, sin -C) no fue denegado aunque el primero apuntara a otro repo: $OUT"; exit 1; }
+echo "PASS: un tree-op local en un comando compuesto se denega aunque otro tree-op del mismo comando apunte a otro repo"
+rm -rf "$REPO" "$OTHER"
+
+# --- 15. peer en un worktree ENLAZADO anidado dentro del repo -> no interfiere (ninguna direccion) ---
+# 'git worktree add' comparte .git/slate-sessions (mismo git-common-dir), asi
+# que ese peer es visible para la regla -- pero tiene su PROPIA raiz de arbol
+# de trabajo, distinta de la del repo principal aunque este anidado
+# FISICAMENTE debajo (probado: un 'git checkout -b x' en la raiz deja
+# intactos los archivos del worktree enlazado, y viceversa). Comparar por
+# contencion de carpetas (ronda 2) los confundia con el mismo arbol y
+# denegaba sin una colision real; comparar raices resueltas por igualdad
+# ('rev-parse --show-toplevel') los distingue.
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+git -C "$REPO" worktree add -q -b wtbranch-15a wt
+WT=$(cd "$REAL/wt" && pwd -P)
+
+# 15a. sesion en la RAIZ, peer en el worktree enlazado anidado -> no interfiere
+write_peer_lock "$REPO" "peer" "$WT"
+OUT=$(payload "yo" "$REAL" "git checkout -b brandnew" | bash "$HOOK")
+is_deny "$OUT" && { echo "FAIL: un peer en un worktree enlazado ANIDADO no debe bloquear un checkout en la raiz: $OUT"; exit 1; }
+rm -f "$REPO/.git/slate-sessions/peer.lock"
+
+# 15b. sesion en el worktree enlazado anidado, peer en la RAIZ -> tampoco interfiere
+write_peer_lock "$REPO" "peer" "$REAL"
+OUT=$(payload "yo" "$WT" "git checkout -b otramas" | bash "$HOOK")
+is_deny "$OUT" && { echo "FAIL: un peer en la RAIZ no debe bloquear un checkout en un worktree enlazado ANIDADO: $OUT"; exit 1; }
+echo "PASS: un peer en un worktree enlazado anidado no interfiere en ninguna direccion"
 rm -rf "$REPO"
 
 echo "All guardian tree-op tests passed."
