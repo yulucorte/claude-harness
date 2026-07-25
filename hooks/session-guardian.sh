@@ -78,6 +78,14 @@ def classify(command):
         verb = toks[j]
         if verb in ("commit", "push", "merge", "rebase", "cherry-pick"):
             verbs.add(verb)
+        elif verb in ("checkout", "switch", "restore"):
+            # Reescriben el arbol de trabajo en disco. Prefijo "tree:" para no
+            # mezclarlos con los verbos de integracion de las reglas 1-3.
+            verbs.add("tree:" + verb)
+        elif verb == "reset":
+            # Solo --hard toca los archivos en disco; --soft y --mixed no.
+            if "--hard" in toks[j + 1:]:
+                verbs.add("tree:reset")
         elif verb == "stash":
             verbs.add("stash")
             sub = toks[j + 1] if j + 1 < len(toks) else ""
@@ -112,12 +120,16 @@ for lp in glob.glob(os.path.join(lock_dir, "*.lock")):
     if lid == sid:
         continue
     try:
-        if now - os.path.getmtime(lp) > TTL:
+        mt = os.path.getmtime(lp)
+        if now - mt > TTL:
             continue
         d = json.load(open(lp))
     except Exception:
         continue
+    if not isinstance(d, dict):
+        continue
     d["_id"] = lid
+    d["_mtime"] = mt
     foreign.append(d)
 
 if not foreign:
@@ -138,6 +150,46 @@ def main_ref():
 denies = []
 warns = []
 integ = verbs & {"push", "merge", "rebase", "cherry-pick"}
+
+FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
+
+# Rule 0 — reescritura del arbol: un peer vivo en la MISMA carpeta fisica.
+# Es la unica clase de dano catastrofico: 'checkout'/'switch'/'restore'/
+# 'reset --hard' reescriben los archivos que el otro agente esta editando, en
+# vivo y sin que se entere. En carpetas distintas no hay nada que proteger.
+tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
+if tree_ops:
+    try:
+        my_dir = os.path.realpath(cwd)
+    except Exception:
+        my_dir = ""
+    for d in foreign:
+        peer_cwd = (d.get("cwd") or "").strip()
+        if not my_dir or not peer_cwd:
+            continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
+        try:
+            if os.path.realpath(peer_cwd) != my_dir:
+                continue  # carpetas distintas: ya estan aislados
+        except Exception:
+            continue
+        age = int(now - d.get("_mtime", 0))
+        if age <= FRESH:
+            denies.append(
+                "Otra sesion de Claude Code esta viva en ESTA MISMA carpeta (candado %s, "
+                "actividad hace %ss). 'git %s' reescribiria en disco los archivos que esa "
+                "sesion esta editando ahora mismo, sin que su agente se entere. "
+                "Bloqueado por session-guardian. Trabaja sobre la rama actual, o abre una "
+                "sesion nueva en otra carpeta si necesitas otra rama."
+                % (d["_id"][:8], age, tree_ops[0])
+            )
+        else:
+            warns.append(
+                "hay un candado de otra sesion en esta misma carpeta (%s) sin actividad desde "
+                "hace %ss; puede estar muerta sin limpiar. 'git %s' reescribe el arbol de "
+                "trabajo: confirma que nadie mas esta editando aqui antes de seguir."
+                % (d["_id"][:8], age, tree_ops[0])
+            )
+        break
 
 # Rule 1 — same-branch collision (confirmed): another live session is on my branch
 if actual_branch and (verbs & {"commit", "push", "merge", "rebase", "cherry-pick"}):
