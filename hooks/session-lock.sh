@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # SessionStart hook: session-lock guardian, layer 1.
-# Detects if another LIVE session already claims this branch; if so,
-# isolates this session into a dedicated git worktree + branch.
+# Detects a live peer session already on this branch and emits an
+# actionable warning (additionalContext) — it never creates a worktree or
+# branch for isolation. Enforcement (denying the dangerous git ops) is
+# session-guardian's job.
 # Never blocks a session start — always exits 0.
 set -uo pipefail
 
