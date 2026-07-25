@@ -59,6 +59,7 @@ def git(*args):
 def classify(command):
     verbs = set()
     stash = {"sub": None, "explicit": False}
+    tree_dir = None  # valor de -C/--work-tree visto junto a un tree-op detectado
     for seg in re.split(r"[;&|\n]+", command):
         try:
             toks = shlex.split(seg)
@@ -68,8 +69,13 @@ def classify(command):
         if gi is None:
             continue
         j = gi + 1
+        seg_dir = None
         while j < len(toks) and toks[j].startswith("-"):
-            if toks[j] in ("-C", "-c", "--git-dir", "--work-tree", "--namespace"):
+            if toks[j] in ("-C", "--work-tree"):
+                if j + 1 < len(toks):
+                    seg_dir = toks[j + 1]
+                j += 2
+            elif toks[j] in ("-c", "--git-dir", "--namespace"):
                 j += 2
             else:
                 j += 1
@@ -82,20 +88,25 @@ def classify(command):
             # Reescriben el arbol de trabajo en disco. Prefijo "tree:" para no
             # mezclarlos con los verbos de integracion de las reglas 1-3.
             verbs.add("tree:" + verb)
+            if tree_dir is None:
+                tree_dir = seg_dir or cwd
         elif verb == "reset":
-            # Solo --hard toca los archivos en disco; --soft y --mixed no.
-            if "--hard" in toks[j + 1:]:
+            # --hard, --merge y --keep reescriben archivos del arbol de trabajo;
+            # --soft y --mixed solo tocan HEAD/indice, nunca los archivos.
+            if any(f in toks[j + 1:] for f in ("--hard", "--merge", "--keep")):
                 verbs.add("tree:reset")
+                if tree_dir is None:
+                    tree_dir = seg_dir or cwd
         elif verb == "stash":
             verbs.add("stash")
             sub = toks[j + 1] if j + 1 < len(toks) else ""
             if sub.startswith("-"):
                 sub = ""
             stash = {"sub": sub, "explicit": ("stash@{" in seg)}
-    return verbs, stash
+    return verbs, stash, tree_dir
 
 
-verbs, stash = classify(cmd)
+verbs, stash, tree_dir = classify(cmd)
 if not verbs:
     sys.exit(0)
 
@@ -155,16 +166,26 @@ FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
 
 # Rule 0 — reescritura del arbol: un peer vivo en la MISMA carpeta fisica.
 # Es la unica clase de dano catastrofico: 'checkout'/'switch'/'restore'/
-# 'reset --hard' reescriben los archivos que el otro agente esta editando, en
-# vivo y sin que se entere. En carpetas distintas no hay nada que proteger.
+# 'reset --hard|--merge|--keep' reescriben los archivos que el otro agente
+# esta editando, en vivo y sin que se entere. En carpetas distintas no hay
+# nada que proteger (por eso se respeta un -C/--work-tree explicito).
 tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
 if tree_ops:
+    # El objetivo real de la operacion: -C/--work-tree si el comando lo trae
+    # (un checkout hacia OTRO repo no toca esta carpeta); si no, esta sesion.
+    target = tree_dir if tree_dir else cwd
+    if not os.path.isabs(target):
+        target = os.path.join(cwd, target)
     try:
-        my_dir = os.path.realpath(cwd)
+        my_dir = os.path.realpath(target)
     except Exception:
         my_dir = ""
+    matches = []
     for d in foreign:
-        peer_cwd = (d.get("cwd") or "").strip()
+        peer_cwd = d.get("cwd")
+        if not isinstance(peer_cwd, str):
+            continue  # ausente o de tipo inesperado: nunca se deniega a ciegas
+        peer_cwd = peer_cwd.strip()
         if not my_dir or not peer_cwd:
             continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
         try:
@@ -172,7 +193,14 @@ if tree_ops:
                 continue  # carpetas distintas: ya estan aislados
         except Exception:
             continue
-        age = int(now - d.get("_mtime", 0))
+        matches.append(d)
+    if matches:
+        # El peer MAS FRESCO decide el veredicto: si al menos uno esta vivo
+        # con certeza, se deniega; solo se avisa si TODOS los que comparten
+        # carpeta estan en la banda tibia. El orden de glob.glob es arbitrario
+        # y no debe decidir esto (antes ganaba el primer match, sin mas).
+        freshest = min(matches, key=lambda d: now - d.get("_mtime", 0))
+        age = int(now - freshest.get("_mtime", 0))
         if age <= FRESH:
             denies.append(
                 "Otra sesion de Claude Code esta viva en ESTA MISMA carpeta (candado %s, "
@@ -180,16 +208,15 @@ if tree_ops:
                 "sesion esta editando ahora mismo, sin que su agente se entere. "
                 "Bloqueado por session-guardian. Trabaja sobre la rama actual, o abre una "
                 "sesion nueva en otra carpeta si necesitas otra rama."
-                % (d["_id"][:8], age, tree_ops[0])
+                % (freshest["_id"][:8], age, tree_ops[0])
             )
         else:
             warns.append(
                 "hay un candado de otra sesion en esta misma carpeta (%s) sin actividad desde "
                 "hace %ss; puede estar muerta sin limpiar. 'git %s' reescribe el arbol de "
                 "trabajo: confirma que nadie mas esta editando aqui antes de seguir."
-                % (d["_id"][:8], age, tree_ops[0])
+                % (freshest["_id"][:8], age, tree_ops[0])
             )
-        break
 
 # Rule 1 — same-branch collision (confirmed): another live session is on my branch
 if actual_branch and (verbs & {"commit", "push", "merge", "rebase", "cherry-pick"}):
