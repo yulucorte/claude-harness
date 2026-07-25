@@ -66,7 +66,7 @@ echo "$OUTPUT3" | grep -q additionalContext && { echo "FAIL: stale lock triggere
 echo "PASS: stale lock (>900s) is ignored, no isolation triggered"
 rm -rf "$REPO" "$REPO.slate-worktrees" 2>/dev/null
 
-# --- Test: existing SAME-branch FRESH lock -> real collision, isolates into worktree ---
+# --- Test: existing SAME-branch FRESH lock -> colision real, avisa SIN crear worktree ---
 REPO=$(setup_repo)
 BR=$(git -C "$REPO" branch --show-current)
 mkdir -p "$REPO/.git/slate-sessions"
@@ -76,21 +76,17 @@ EOF
 
 OUTPUT4=$(echo '{"session_id":"sess-colliding"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK")
 echo "$OUTPUT4" | grep -q additionalContext || { echo "FAIL: no additionalContext on real collision. Output: $OUTPUT4"; exit 1; }
-echo "$OUTPUT4" | grep -q "slate-session/sess-col" || { echo "FAIL: additionalContext missing new branch name. Output: $OUTPUT4"; exit 1; }
+echo "$OUTPUT4" | grep -q "checkout" || { echo "FAIL: el aviso de colision no nombra la operacion peligrosa. Output: $OUTPUT4"; exit 1; }
 
 REPO_PARENT="$(dirname "$REPO")"
 REPO_BASE="$(basename "$REPO")"
-WT_PATH="${REPO_PARENT}/${REPO_BASE}.slate-worktrees/sess-col"
-[ -d "$WT_PATH" ] || { echo "FAIL: worktree directory not created at $WT_PATH"; exit 1; }
-WT_BRANCH=$(git -C "$WT_PATH" branch --show-current)
-[ "$WT_BRANCH" = "slate-session/sess-col" ] || { echo "FAIL: worktree is on wrong branch: $WT_BRANCH"; exit 1; }
+[ -d "${REPO_PARENT}/${REPO_BASE}.slate-worktrees" ] && { echo "FAIL: se creo un worktree; el aislamiento automatico fue eliminado"; exit 1; }
 
 LOCK_FILE="$REPO/.git/slate-sessions/sess-colliding.lock"
-grep -q "slate-session/sess-col" "$LOCK_FILE" || { echo "FAIL: colliding session's own lock does not record isolated branch"; exit 1; }
-echo "PASS: real branch collision creates isolated worktree on a new branch"
+grep -q "slate-session/" "$LOCK_FILE" && { echo "FAIL: el lock registra una rama slate-session/* inventada"; exit 1; }
+echo "PASS: real branch collision warns without creating a worktree"
 
-git -C "$REPO" worktree remove --force "$WT_PATH" 2>/dev/null || true
-rm -rf "$REPO" "${REPO_PARENT}/${REPO_BASE}.slate-worktrees" 2>/dev/null
+rm -rf "$REPO" 2>/dev/null
 
 echo ""
 echo "All session-lock tests passed."

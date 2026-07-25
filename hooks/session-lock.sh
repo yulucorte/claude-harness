@@ -67,26 +67,23 @@ LOCK_BRANCH_OUT="$CURRENT_BRANCH"
 WT_OUT=""
 HEAD_OUT="$(git rev-parse HEAD 2>/dev/null || true)"
 
+# Aviso informativo, sin efectos en disco.
+#
+# Hasta 1.6.1 este bloque creaba una worktree dedicada y le pedia al agente que
+# se mudara. No funciona: un hook SessionStart no puede cambiar el directorio de
+# trabajo de una sesion ya arrancada, y la peticion compite (y pierde) contra el
+# resto del contexto del agente. Verificado en vivo: las worktrees generadas asi
+# quedaron siempre vacias. El mecanismo pagaba el costo (carpetas acumuladas)
+# sin dar el beneficio (aislamiento). La proteccion real la aplica ahora
+# session-guardian, denegando las operaciones que reescriben el arbol.
 if [ "$COLLISION" -eq 1 ]; then
-  SHORT_ID="${SESSION_ID:0:8}"
-  NEW_BRANCH="slate-session/${SHORT_ID}"
-  PARENT_DIR="$(dirname "$PROJECT_ROOT")"
-  BASE_NAME="$(basename "$PROJECT_ROOT")"
-  WT_PATH="${PARENT_DIR}/${BASE_NAME}.slate-worktrees/${SHORT_ID}"
+  CONTEXT="Otra sesion de Claude Code ya esta activa en la rama '${CURRENT_BRANCH}' de esta misma carpeta:
 
-  mkdir -p "$(dirname "$WT_PATH")" 2>/dev/null
-  if git worktree add "$WT_PATH" -b "$NEW_BRANCH" "$CURRENT_BRANCH" >/dev/null 2>&1; then
-    LOCK_BRANCH_OUT="$NEW_BRANCH"
-    WT_OUT="$WT_PATH"
-    HEAD_OUT="$(git -C "$WT_PATH" rev-parse HEAD 2>/dev/null || echo "$HEAD_OUT")"
-    CONTEXT="Otra sesion de Claude Code ya esta activa en la rama '${CURRENT_BRANCH}' de este repo. Para no pisarle la rama, el indice de git, ni el stash, esta sesion quedo aislada en una copia separada del repo:
+  ${PROJECT_ROOT}
 
-  ${WT_PATH}  (rama: ${NEW_BRANCH})
+NO cambies de rama mientras dure: 'git checkout', 'git switch', 'git restore' y 'git reset --hard' reescriben en disco los archivos que la otra sesion esta editando, sin que su agente se entere. session-guardian bloqueara esas operaciones.
 
-A partir de ahora, para CUALQUIER comando git (branch, commit, push, stash, etc.) usa esa carpeta: cd ${WT_PATH} && git ... No operes sobre ${PROJECT_ROOT} hasta que la otra sesion termine."
-  else
-    CONTEXT="AVISO: otra sesion ya esta activa en la rama '${CURRENT_BRANCH}' y no pude aislar esta sesion en un worktree separado (fallo 'git worktree add'). Tene cuidado: pueden pisarse la rama, el indice o el stash."
-  fi
+Editar archivos distintos sobre la rama actual es seguro. Si necesitas trabajar en OTRA rama en paralelo, abre una sesion de Claude Code NUEVA en otra carpeta: el aislamiento solo funciona si la sesion arranca alli, no si se le pide mudarse."
 fi
 
 # Ruta FISICA de la carpeta de trabajo. El hook ya hizo `cd "$PROJECT_ROOT"` al
