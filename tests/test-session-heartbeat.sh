@@ -41,7 +41,12 @@ echo "PASS: heartbeat mirrors current branch and head into the lock"
 
 # --- Test: a UserPromptSubmit-shaped payload (no tool_name/tool_input) still
 #     refreshes mtime, branch, head and cwd, without erroring and without
-#     ever touching 'files' (heartbeat.sh never reads/writes that key) ---
+#     touching 'files' -- NOT because heartbeat.sh never reads/writes that key
+#     (it does, since the Task 4 file-tracking addition), but because THIS
+#     payload carries no tool_name, so it never matches Write/Edit/NotebookEdit
+#     and no file is ever considered "written". See
+#     test-heartbeat-records-files.sh for the cases where a write tool IS
+#     present and 'files' does change. ---
 REAL=$(cd "$REPO" && pwd -P)
 git -C "$REPO" checkout -qb prompt-branch
 PHEAD=$(git -C "$REPO" rev-parse HEAD)
@@ -64,7 +69,7 @@ grep -q "\"head\": \"$PHEAD\"" "$REPO/.git/slate-sessions/sess-ups.lock" \
 grep -q "\"cwd\": \"$REAL\"" "$REPO/.git/slate-sessions/sess-ups.lock" \
   || { echo "FAIL: heartbeat did not record cwd on a UserPromptSubmit-shaped payload. Content: $(cat "$REPO/.git/slate-sessions/sess-ups.lock")"; exit 1; }
 grep -q '"files"' "$REPO/.git/slate-sessions/sess-ups.lock" \
-  && { echo "FAIL: heartbeat must never introduce a 'files' key (that is session-lock.sh's job, not heartbeat's)"; exit 1; }
+  && { echo "FAIL: a payload with no tool_name must not record any file (it never matches Write/Edit/NotebookEdit, so the files-update block never runs)"; exit 1; }
 echo "PASS: heartbeat handles a UserPromptSubmit-shaped payload (no tool_name/tool_input): refreshes mtime, branch, head and cwd, without touching 'files'"
 
 rm -rf "$REPO"

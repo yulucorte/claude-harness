@@ -74,4 +74,46 @@ beat "$REAL" "Write" "$REAL/x.txt"
 echo "PASS: sin lock propio termina limpio"
 rm -rf "$REPO"
 
+# --- 6/7/8: un payload malformado degrada en silencio, no revienta el parseo ---
+# El script bash siempre termina en 'exit 0' pase lo que pase adentro, asi que
+# el codigo de salida por si solo NO detecta un traceback de python interno --
+# hay que revisar stderr. Y si el traceback ocurre ANTES del os.utime() de
+# liveness y del espejo de branch/head/cwd (que es donde vivian las lineas de
+# tool_name/tool_input agregadas en la Task 4), esta funcion tambien lo
+# detecta exigiendo que el mtime del lock avance igual.
+assert_malformed_safe() {
+  # $1=label $2=payload json (ya serializado) $3=lock path
+  local label="$1" payload="$2" lock="$3" before after out err rc old_mtime new_mtime
+  before=$(count "$lock")
+  python3 -c "import os,time; t=time.time()-1000; os.utime('$lock',(t,t))"
+  old_mtime=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock")
+  out=$(mktemp); err=$(mktemp)
+  printf '%s' "$payload" | bash "$HOOK" >"$out" 2>"$err"
+  rc=$?
+  [ "$rc" -eq 0 ] || { echo "FAIL ($label): exit code $rc, se esperaba 0"; exit 1; }
+  [ -s "$out" ] && { echo "FAIL ($label): stdout no vacio: $(cat "$out")"; exit 1; }
+  [ -s "$err" ] && { echo "FAIL ($label): stderr no vacio (traceback fugado): $(cat "$err")"; exit 1; }
+  after=$(count "$lock")
+  [ "$after" = "$before" ] || { echo "FAIL ($label): 'files' cambio ($before -> $after): $(paths "$lock")"; exit 1; }
+  new_mtime=$(stat -f %m "$lock" 2>/dev/null || stat -c %Y "$lock")
+  [ "$new_mtime" -gt "$old_mtime" ] || { echo "FAIL ($label): el heartbeat no refresco el lock (se perdio la liveness)"; exit 1; }
+  rm -f "$out" "$err"
+  echo "PASS: $label"
+}
+
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+LOCK="$REAL/.git/slate-sessions/sess-hb.lock"
+
+PAYLOAD6=$(python3 -c "import json,sys; print(json.dumps({'session_id':'sess-hb','cwd':sys.argv[1],'tool_name':12345,'tool_input':{'file_path':sys.argv[1]+'/bad6.txt'}}))" "$REAL")
+assert_malformed_safe "tool_name no-string degrada a ausente sin romper el hook" "$PAYLOAD6" "$LOCK"
+
+PAYLOAD7=$(python3 -c "import json,sys; print(json.dumps({'session_id':'sess-hb','cwd':sys.argv[1],'tool_name':'Write','tool_input':'not-a-dict'}))" "$REAL")
+assert_malformed_safe "tool_input no-dict degrada a vacio sin romper el hook" "$PAYLOAD7" "$LOCK"
+
+PAYLOAD8=$(python3 -c "import json,sys; print(json.dumps({'session_id':'sess-hb','cwd':sys.argv[1],'tool_name':'Write','tool_input':{'file_path':12345}}))" "$REAL")
+assert_malformed_safe "file_path no-string degrada a ausente sin romper el hook" "$PAYLOAD8" "$LOCK"
+
+rm -rf "$REPO"
+
 echo "All heartbeat file-tracking tests passed."

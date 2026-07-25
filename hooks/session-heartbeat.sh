@@ -28,12 +28,19 @@ if not sid:
 cwd = (payload.get("cwd") or "").strip() or os.environ.get("CLAUDE_PROJECT_ROOT") or os.getcwd()
 
 # Herramienta que acaba de ejecutarse. Solo las de escritura dejan rastro en el
-# lock: son las unicas que pueden pisar el trabajo de otra sesion.
-tool = (payload.get("tool_name") or "").strip()
-tool_input = payload.get("tool_input") or {}
+# lock: son las unicas que pueden pisar el trabajo de otra sesion. Cada campo
+# puede llegar con un tipo inesperado en un payload malformado; degradamos a
+# su valor vacio en vez de reventar -- un .strip()/.get() sobre el tipo
+# equivocado aqui tumbaba TODO el heartbeat (liveness y espejo incluidos),
+# porque estas lineas corren antes de llegar a esa parte del script.
+tool = payload.get("tool_name")
+tool = tool.strip() if isinstance(tool, str) else ""
+tool_input = payload.get("tool_input")
+tool_input = tool_input if isinstance(tool_input, dict) else {}
 written = ""
 if tool in ("Write", "Edit", "NotebookEdit"):
-    written = (tool_input.get("file_path") or tool_input.get("notebook_path") or "").strip()
+    fp = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    written = fp.strip() if isinstance(fp, str) else ""
 
 if not os.path.isdir(cwd):
     sys.exit(0)
