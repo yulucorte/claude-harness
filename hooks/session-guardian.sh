@@ -31,10 +31,26 @@ except Exception:
     sys.exit(0)
 
 sid = (payload.get("session_id") or "").strip()
-cmd = (payload.get("tool_input") or {}).get("command") or ""
+tool = (payload.get("tool_name") or "").strip()
+tool_input = payload.get("tool_input") or {}
+cmd = tool_input.get("command") or ""
 cwd = (payload.get("cwd") or "").strip()
-if not sid or not cmd:
+if not sid:
     sys.exit(0)
+
+# Dos modos. "file": una escritura, solo puede AVISAR de un choque de archivo.
+# "bash": un comando git, es el unico que puede DENEGAR.
+if tool in ("Write", "Edit", "NotebookEdit"):
+    mode = "file"
+    raw_target = tool_input.get("file_path") or tool_input.get("notebook_path") or ""
+    target = raw_target.strip() if isinstance(raw_target, str) else ""
+    if not target:
+        sys.exit(0)
+else:
+    mode = "bash"
+    target = ""
+    if not cmd:
+        sys.exit(0)
 if not cwd:
     cwd = os.environ.get("CLAUDE_PROJECT_ROOT") or os.getcwd()
 if not os.path.isdir(cwd):
@@ -108,9 +124,12 @@ def classify(command):
     return verbs, stash, tree_hits
 
 
-verbs, stash, tree_hits = classify(cmd)
-if not verbs:
-    sys.exit(0)
+if mode == "bash":
+    verbs, stash, tree_hits = classify(cmd)
+    if not verbs:
+        sys.exit(0)
+else:
+    verbs, stash, tree_hits = set(), {"sub": None, "explicit": False}, []
 
 # --- must be a real git repo -------------------------------------------------
 if git("rev-parse", "--git-dir").returncode != 0:
@@ -149,6 +168,77 @@ if not foreign:
     # This session is alone. A deliberate branch change is not a collision.
     sys.exit(0)
 
+_toplevel_cache = {}
+
+
+def worktree_root(path):
+    # Memoizado: la misma carpeta nunca se resuelve dos veces en una
+    # invocacion. Sin esto, un comando con varios tree-ops identicos (o
+    # varios peers en la misma carpeta) dispara un "git rev-parse
+    # --show-toplevel" por cada uno; con git colgado, cada uno gasta su
+    # propio timeout=10 en vez de compartir un solo resultado.
+    if path in _toplevel_cache:
+        return _toplevel_cache[path]
+    r = git("rev-parse", "--show-toplevel", in_dir=path)
+    top = r.stdout.strip()
+    try:
+        result = os.path.realpath(top) if r.returncode == 0 and top else path
+    except Exception:
+        result = path
+    _toplevel_cache[path] = result
+    return result
+
+
+# --- modo fichero: avisar si un peer de la MISMA carpeta escribio este archivo -
+# Nunca deniega. El choque de archivo es localizado, visible en 'git status' y
+# recuperable; bloquearlo generaria friccion constante sin evitar dano real.
+# Comparo raices de worktree resueltas (no cwd crudo) por la misma razon que
+# la regla 0: un -C o un worktree enlazado pueden hacer que dos cwd distintos
+# sean la MISMA raiz fisica, o que el mismo cwd crudo ya no sea suficiente.
+if mode == "file":
+    try:
+        my_root = worktree_root(os.path.realpath(cwd))
+    except Exception:
+        sys.exit(0)
+    for d in foreign:
+        peer_cwd = d.get("cwd")
+        if not isinstance(peer_cwd, str):
+            continue  # ausente o de tipo inesperado: nunca se avisa a ciegas
+        peer_cwd = peer_cwd.strip()
+        if not peer_cwd:
+            continue  # lock legado sin cwd: se ignora, nunca se avisa a ciegas
+        try:
+            p = os.path.realpath(peer_cwd)
+        except Exception:
+            continue
+        if worktree_root(p) != my_root:
+            continue  # raiz de worktree distinta: no hay nada que avisar
+        entries = d.get("files")
+        if not isinstance(entries, list):
+            continue
+        for e in entries:
+            if not isinstance(e, dict) or e.get("path") != target:
+                continue
+            try:
+                ago = int(now - float(e.get("ts") or 0))
+            except Exception:
+                continue
+            if ago > TTL:
+                continue
+            msg = ("session-guardian: otra sesion viva en esta misma carpeta (candado %s) "
+                   "escribio '%s' hace %ss. Relee el archivo antes de editarlo: tu version "
+                   "en contexto puede estar desactualizada y tu escritura pisaria su cambio."
+                   % (d["_id"][:8], os.path.basename(target), ago))
+            print(json.dumps({
+                "systemMessage": "⚠️ " + msg,
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": msg,
+                }
+            }))
+            sys.exit(0)
+    sys.exit(0)
+
 actual_branch = git("branch", "--show-current").stdout.strip()
 actual_head = git("rev-parse", "HEAD").stdout.strip()
 
@@ -173,24 +263,8 @@ FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
 # nada que proteger (por eso se respeta un -C/--work-tree explicito).
 tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
 if tree_ops:
-    _toplevel_cache = {}
-
-    def worktree_root(path):
-        # Memoizado: la misma carpeta nunca se resuelve dos veces en una
-        # invocacion. Sin esto, un comando con varios tree-ops identicos (o
-        # varios peers en la misma carpeta) dispara un "git rev-parse
-        # --show-toplevel" por cada uno; con git colgado, cada uno gasta su
-        # propio timeout=10 en vez de compartir un solo resultado.
-        if path in _toplevel_cache:
-            return _toplevel_cache[path]
-        r = git("rev-parse", "--show-toplevel", in_dir=path)
-        top = r.stdout.strip()
-        try:
-            result = os.path.realpath(top) if r.returncode == 0 and top else path
-        except Exception:
-            result = path
-        _toplevel_cache[path] = result
-        return result
+    # worktree_root()/_toplevel_cache definidos arriba (compartidos con el
+    # modo fichero) -- no se redefinen aqui.
 
     def resolve_target(raw_dir):
         # El objetivo crudo: -C/--work-tree si el comando lo trae (resuelto
