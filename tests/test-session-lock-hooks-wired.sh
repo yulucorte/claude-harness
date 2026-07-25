@@ -28,6 +28,9 @@ assert any('session-lock-cleanup.sh' in c for c in session_end_cmds), 'session-l
 post_cmds = cmds('PostToolUse')
 assert any('session-heartbeat.sh' in c for c in post_cmds), 'session-heartbeat.sh not wired into PostToolUse'
 
+prompt_cmds = cmds('UserPromptSubmit')
+assert any('session-heartbeat.sh' in c for c in prompt_cmds), 'session-heartbeat.sh not wired into UserPromptSubmit'
+
 pre_cmds = cmds('PreToolUse')
 assert any('session-guardian.sh' in c for c in pre_cmds), 'session-guardian.sh not wired into PreToolUse'
 
@@ -39,4 +42,4 @@ assert any('pre-compact.sh' in c for c in pre_compact_cmds), 'existing pre-compa
 
 print('OK')
 "
-echo "PASS: all 4 session-lock hooks are wired into hooks.json without disturbing existing entries"
+echo "PASS: all 4 session-lock hooks (incl. session-heartbeat.sh on both PostToolUse and UserPromptSubmit) are wired into hooks.json without disturbing existing entries"

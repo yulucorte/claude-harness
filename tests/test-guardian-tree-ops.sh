@@ -131,13 +131,12 @@ echo "PASS: lock legado sin cwd se ignora sin romper"
 rm -rf "$REPO"
 
 # --- 9. dos peers en la MISMA carpeta: el FRESCO decide, no el primero en orden ---
-# Verificado empiricamente para este par de nombres dentro de .git/slate-sessions:
-# glob.glob devuelve "peer-z.lock" ANTES que "peer-a.lock" en este filesystem
-# (orden interno del directorio, no alfabetico). Por eso "peer-z" lleva la edad
-# TIBIA y "peer-a" la FRESCA: un guardian que se quedara con el primer match
-# (rompiendo el bucle ahi) encontraria a peer-z primero y avisaria en vez de
-# denegar, aunque peer-a -verdaderamente vivo- este justo al lado. Confirmado
-# contra el codigo previo a este arreglo: efectivamente solo avisaba.
+# Independiente del filesystem: se prueban las DOS asignaciones de edad posibles
+# entre estos dos nombres. glob.glob() puede devolver "peer-z.lock" antes que
+# "peer-a.lock" o al reves segun la maquina (verificado no-alfabetico y estable
+# en esta, pero NO se asume ese orden aqui) -- probando ambas asignaciones, al
+# menos una de las dos ejercita de verdad "el fresco NO es el primero en orden
+# de archivos" sin importar que orden devuelva glob.glob() en cualquier maquina.
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer-z" "$REAL"
@@ -145,8 +144,18 @@ write_peer_lock "$REPO" "peer-a" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer-z.lock" 600
 age_lock "$REPO/.git/slate-sessions/peer-a.lock" 10
 OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
-is_deny "$OUT" || { echo "FAIL: con un peer fresco (10s) y uno tibio (600s) en la misma carpeta, debe denegar sin importar el orden de archivos: $OUT"; exit 1; }
-echo "PASS: el peer mas fresco decide el veredicto, no el primero en orden de archivos"
+is_deny "$OUT" || { echo "FAIL: (peer-z tibio 600s, peer-a fresco 10s) debe denegar sin importar el orden de archivos: $OUT"; exit 1; }
+rm -rf "$REPO"
+
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+write_peer_lock "$REPO" "peer-z" "$REAL"
+write_peer_lock "$REPO" "peer-a" "$REAL"
+age_lock "$REPO/.git/slate-sessions/peer-z.lock" 10
+age_lock "$REPO/.git/slate-sessions/peer-a.lock" 600
+OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: (peer-z fresco 10s, peer-a tibio 600s) debe denegar sin importar el orden de archivos: $OUT"; exit 1; }
+echo "PASS: el peer mas fresco decide el veredicto bajo las dos asignaciones de edad posibles (no depende del orden de archivos de ningun filesystem)"
 rm -rf "$REPO"
 
 # --- 10. cwd de tipo no-string en el lock -> se ignora, nunca rompe ni deniega ---
@@ -182,6 +191,32 @@ done
 OUT=$(payload "yo" "$REAL" "git reset --mixed HEAD~1" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: 'reset --mixed' no toca el arbol y no debe denegarse: $OUT"; exit 1; }
 echo "PASS: reset --merge y --keep denegados, --mixed permitido"
+rm -rf "$REPO"
+
+# --- 13. git -C <subcarpeta-de-ESTE-repo> checkout con peer en la RAIZ -> DENEGADO ---
+# checkout/switch reescriben el arbol de trabajo COMPLETO sin importar la
+# subcarpeta desde la que se invoquen (-C solo cambia donde git busca el repo,
+# no el alcance de lo que toca). Un peer vivo en la raiz del repo sigue en
+# riesgo aunque el comando se invoque via -C hacia una subcarpeta.
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+mkdir -p "$REPO/sub"
+write_peer_lock "$REPO" "peer" "$REAL"
+OUT=$(payload "yo" "$REAL" "git -C sub checkout -b otra" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: 'git -C sub checkout' con un peer vivo en la RAIZ de este mismo repo no fue denegado: $OUT"; exit 1; }
+echo "PASS: 'git -C <subcarpeta-de-este-repo> checkout' denegado con un peer en la raiz"
+rm -rf "$REPO"
+
+# --- 14. comando compuesto: el primer tree-op apunta AFUERA, el segundo es LOCAL -> DENEGADO ---
+# El -C de un tree-op no debe decidir el objetivo de OTRO tree-op en el mismo
+# comando. Aqui el primer 'checkout' apunta a /tmp (inofensivo), pero el
+# segundo es local (sin -C) y SI colisiona con el peer de esta carpeta.
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+write_peer_lock "$REPO" "peer" "$REAL"
+OUT=$(payload "yo" "$REAL" "git -C /tmp checkout -b x && git checkout -b y" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: el segundo tree-op (local, sin -C) no fue denegado aunque el primero apuntara afuera: $OUT"; exit 1; }
+echo "PASS: un tree-op local en un comando compuesto se denega aunque otro tree-op del mismo comando apunte afuera"
 rm -rf "$REPO"
 
 echo "All guardian tree-op tests passed."

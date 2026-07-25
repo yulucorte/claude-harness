@@ -41,10 +41,10 @@ if not os.path.isdir(cwd):
     sys.exit(0)
 
 
-def git(*args):
+def git(*args, in_dir=None):
     try:
         return subprocess.run(
-            ["git", "-C", cwd, *args],
+            ["git", "-C", in_dir or cwd, *args],
             capture_output=True, text=True, timeout=10,
         )
     except Exception:
@@ -59,7 +59,11 @@ def git(*args):
 def classify(command):
     verbs = set()
     stash = {"sub": None, "explicit": False}
-    tree_dir = None  # valor de -C/--work-tree visto junto a un tree-op detectado
+    # Un tree-op por cada invocacion de git que lo dispare, con su propio
+    # -C/--work-tree (o None). Un comando compuesto puede traer varios; cada
+    # uno se evalua por separado mas adelante (round 2, item 2) en vez de
+    # dejar que el primero decida por todos.
+    tree_hits = []
     for seg in re.split(r"[;&|\n]+", command):
         try:
             toks = shlex.split(seg)
@@ -88,25 +92,23 @@ def classify(command):
             # Reescriben el arbol de trabajo en disco. Prefijo "tree:" para no
             # mezclarlos con los verbos de integracion de las reglas 1-3.
             verbs.add("tree:" + verb)
-            if tree_dir is None:
-                tree_dir = seg_dir or cwd
+            tree_hits.append(seg_dir)
         elif verb == "reset":
             # --hard, --merge y --keep reescriben archivos del arbol de trabajo;
             # --soft y --mixed solo tocan HEAD/indice, nunca los archivos.
             if any(f in toks[j + 1:] for f in ("--hard", "--merge", "--keep")):
                 verbs.add("tree:reset")
-                if tree_dir is None:
-                    tree_dir = seg_dir or cwd
+                tree_hits.append(seg_dir)
         elif verb == "stash":
             verbs.add("stash")
             sub = toks[j + 1] if j + 1 < len(toks) else ""
             if sub.startswith("-"):
                 sub = ""
             stash = {"sub": sub, "explicit": ("stash@{" in seg)}
-    return verbs, stash, tree_dir
+    return verbs, stash, tree_hits
 
 
-verbs, stash, tree_dir = classify(cmd)
+verbs, stash, tree_hits = classify(cmd)
 if not verbs:
     sys.exit(0)
 
@@ -171,29 +173,68 @@ FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
 # nada que proteger (por eso se respeta un -C/--work-tree explicito).
 tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
 if tree_ops:
-    # El objetivo real de la operacion: -C/--work-tree si el comando lo trae
-    # (un checkout hacia OTRO repo no toca esta carpeta); si no, esta sesion.
-    target = tree_dir if tree_dir else cwd
-    if not os.path.isabs(target):
-        target = os.path.join(cwd, target)
-    try:
-        my_dir = os.path.realpath(target)
-    except Exception:
-        my_dir = ""
-    matches = []
-    for d in foreign:
-        peer_cwd = d.get("cwd")
-        if not isinstance(peer_cwd, str):
-            continue  # ausente o de tipo inesperado: nunca se deniega a ciegas
-        peer_cwd = peer_cwd.strip()
-        if not my_dir or not peer_cwd:
-            continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
+    def resolve_target(raw_dir):
+        # El objetivo crudo: -C/--work-tree si el comando lo trae (resuelto
+        # relativo a esta sesion), si no, esta sesion misma.
         try:
-            if os.path.realpath(peer_cwd) != my_dir:
-                continue  # carpetas distintas: ya estan aislados
+            t = raw_dir if raw_dir else cwd
+            if not os.path.isabs(t):
+                t = os.path.join(cwd, t)
+            t = os.path.realpath(t)
         except Exception:
-            continue
-        matches.append(d)
+            return ""
+        # checkout/switch/restore/reset reescriben el arbol de trabajo COMPLETO
+        # sin importar la subcarpeta desde la que se invoquen: -C solo cambia
+        # DONDE busca git el repo, no el alcance de lo que toca (probado:
+        # 'git -C sub switch otra' cambio archivos FUERA de sub). Por eso se
+        # resuelve a la raiz real del worktree; si falla (no es un repo, git
+        # no disponible, etc.) se degrada al directorio crudo sin romper.
+        r = git("rev-parse", "--show-toplevel", in_dir=t)
+        top = r.stdout.strip()
+        if r.returncode == 0 and top:
+            try:
+                return os.path.realpath(top)
+            except Exception:
+                return t
+        return t
+
+    def same_tree(a, b):
+        # Contencion en vez de igualdad exacta: si una carpeta esta DENTRO de
+        # la otra (o son la misma), es la misma extension de arbol de trabajo
+        # -- ya sea porque mi objetivo cayo en una subcarpeta del peer, o
+        # porque el peer mismo trabaja desde una subcarpeta del repo (comun en
+        # monorepos). Carpetas realmente distintas no comparten prefijo.
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        return a.startswith(b + os.sep) or b.startswith(a + os.sep)
+
+    # Un comando compuesto puede traer varios tree-ops con -C distintos; el de
+    # UNO no debe decidir el objetivo de OTRO (round 2, item 2), asi que cada
+    # ocurrencia se resuelve y se compara por separado.
+    targets = set()
+    for raw_dir in tree_hits:
+        t = resolve_target(raw_dir)
+        if t:
+            targets.add(t)
+
+    matches = []
+    for t in targets:
+        for d in foreign:
+            peer_cwd = d.get("cwd")
+            if not isinstance(peer_cwd, str):
+                continue  # ausente o de tipo inesperado: nunca se deniega a ciegas
+            peer_cwd = peer_cwd.strip()
+            if not peer_cwd:
+                continue  # lock legado sin cwd: se ignora, nunca se deniega a ciegas
+            try:
+                p = os.path.realpath(peer_cwd)
+            except Exception:
+                continue
+            if not same_tree(p, t):
+                continue  # carpetas realmente distintas: ya estan aislados
+            matches.append(d)
     if matches:
         # El peer MAS FRESCO decide el veredicto: si al menos uno esta vivo
         # con certeza, se deniega; solo se avisa si TODOS los que comparten
