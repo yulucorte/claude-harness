@@ -126,4 +126,43 @@ FILES=$(python3 -c "import json,sys; print(json.dumps(json.load(open(sys.argv[1]
 echo "PASS: un lock con JSON corrupto no rompe el hook y 'files' arranca en []"
 rm -rf "$REPO"
 
+# --- 7. la escritura del lock es ATOMICA: temporal + rename, nunca truncado
+#        en sitio. Truncar el lock propio abre una ventana en la que el
+#        guardian lo lee a medias, lo descarta por ilegible y deja de ver a un
+#        peer VIVO — justo la senal que decide una denegacion. SessionStart se
+#        re-dispara en startup|resume|clear|compact, asi que la ventana vuelve
+#        una y otra vez durante la sesion. ---
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+
+# 7a. una corrida normal no deja restos .tmp y deja un JSON completo
+echo '{"session_id":"sess-atomic"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null
+LOCK="$REAL/.git/slate-sessions/sess-atomic.lock"
+[ -f "$LOCK" ] || { echo "FAIL: no se creo el lock en $LOCK"; exit 1; }
+LEFTOVERS=$(ls "$REAL/.git/slate-sessions/" | grep -c '\.tmp$' || true)
+[ "$LEFTOVERS" -eq 0 ] || { echo "FAIL: la escritura dejo $LEFTOVERS temporal(es) .tmp sin limpiar"; exit 1; }
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$LOCK" \
+  || { echo "FAIL: el lock no es JSON valido tras una corrida normal"; exit 1; }
+echo "PASS: la escritura normal del lock no deja temporales y produce JSON valido"
+
+# 7b. si la escritura falla a medias, el lock ANTERIOR sobrevive intacto.
+#     El fallo se fuerza creando <lock>.tmp como DIRECTORIO: la escritura
+#     atomica no puede abrir su temporal y aborta ANTES de tocar el lock real;
+#     una escritura truncante habria destruido el contenido previo antes de
+#     saber siquiera si podia completarse.
+python3 -c "import json,sys; json.dump({'branch':'main','cwd':sys.argv[2],'worktree':'','head':'MARCA-PREVIA','started_at':'2026-01-01T00:00:00Z','files':[]}, open(sys.argv[1],'w'))" \
+  "$LOCK" "$REAL"
+mkdir "$LOCK.tmp"
+
+RC7=0
+echo '{"session_id":"sess-atomic"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK" >/dev/null || RC7=$?
+[ "$RC7" -eq 0 ] || { echo "FAIL: el hook no salio con codigo 0 cuando la escritura del lock fallo"; exit 1; }
+
+python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$LOCK" \
+  || { echo "FAIL: una escritura fallida dejo el lock ilegible (se trunco en sitio)"; exit 1; }
+GOT=$(lock_field "$LOCK" head)
+[ "$GOT" = "MARCA-PREVIA" ] || { echo "FAIL: una escritura fallida destruyo el lock previo (head esperado 'MARCA-PREVIA', obtenido '$GOT'): la escritura no es atomica"; exit 1; }
+echo "PASS: una escritura fallida deja intacto el lock anterior (temporal + rename, no truncado en sitio)"
+rm -rf "$REPO"
+
 echo "All session-lock cwd tests passed."

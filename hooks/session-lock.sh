@@ -36,8 +36,14 @@ except Exception:
     print('')" 2>/dev/null || true)
 [ -z "$SESSION_ID" ] && exit 0
 
+# Puede venir VACIA (HEAD desprendido: 'git checkout <sha>', un rebase o un
+# bisect en curso). Eso ya NO es motivo para no registrarse: desde 1.7.0 el
+# candado identifica la CARPETA fisica de trabajo, no una rama, y el arbol de
+# trabajo de una sesion desprendida se destruye igual que cualquier otro. Sin
+# candado esa sesion es invisible para el guardian y el 'git checkout' de un
+# peer se permitia en silencio por encima de ella. Se registra siempre, con
+# branch:"" cuando no hay rama.
 CURRENT_BRANCH="$(git branch --show-current 2>/dev/null)"
-[ -z "$CURRENT_BRANCH" ] && exit 0   # detached HEAD: nothing to protect
 
 TTL_SECONDS=900
 NOW=$(date +%s)
@@ -58,7 +64,10 @@ try:
 except Exception:
     print('')" 2>/dev/null || true)
 
-  if [ "$LOCK_BRANCH" = "$CURRENT_BRANCH" ]; then
+  # Dos ramas VACIAS no son la misma rama: son dos sesiones con HEAD
+  # desprendido, que no comparten reclamacion alguna. Sin esta guarda
+  # colisionarian entre si por "" == "".
+  if [ -n "$CURRENT_BRANCH" ] && [ "$LOCK_BRANCH" = "$CURRENT_BRANCH" ]; then
     COLLISION=1
     break
   fi
@@ -83,7 +92,14 @@ if [ "$COLLISION" -eq 1 ]; then
 
   ${PROJECT_ROOT}
 
-NO cambies de rama mientras dure: 'git checkout', 'git switch', 'git restore' y 'git reset --hard' reescriben en disco los archivos que la otra sesion esta editando, sin que su agente se entere. session-guardian bloqueara esas operaciones.
+NO reescribas el arbol de trabajo mientras dure. session-guardian bloqueara estas operaciones, que reescriben o borran en disco los archivos que la otra sesion esta editando sin que su agente se entere:
+
+  git checkout / git switch / git restore
+  git reset --hard | --merge | --keep   ('--soft' y '--mixed' son seguros)
+  git pull   (fetch + merge/rebase sobre el arbol de trabajo)
+  git clean -f / -fd / -fdx   (borra archivos sin seguimiento del otro agente)
+  git stash / git stash push / git stash -u   (guarda y REVIERTE el arbol)
+  git stash pop / apply sin una referencia stash@{n} explicita
 
 Editar archivos distintos sobre la rama actual es seguro. Si necesitas trabajar en OTRA rama en paralelo, abre una sesion de Claude Code NUEVA en otra carpeta: el aislamiento solo funciona si la sesion arranca alli, no si se le pide mudarse."
 fi
@@ -99,16 +115,31 @@ python3 -c "import json,sys
 # y ya traia una lista 'files' (la va acumulando el heartbeat en la Task 4), la
 # conservamos; si no existe, es ilegible, esta corrupto, o 'files' no es una
 # lista, degradamos en silencio a [] (lock nuevo).
+import os
 files = []
 try:
     prev = json.load(open(sys.argv[6]))
-    if isinstance(prev.get('files'), list):
+    if isinstance(prev, dict) and isinstance(prev.get('files'), list):
         files = prev['files']
 except Exception:
     pass
 data = {'branch': sys.argv[1], 'worktree': sys.argv[2], 'head': sys.argv[3],
         'started_at': sys.argv[4], 'cwd': sys.argv[5], 'files': files}
-json.dump(data, open(sys.argv[6], 'w'))
+# Escritura ATOMICA (temporal + rename), identica a la de session-heartbeat.sh.
+# Truncar el lock en sitio abria una ventana en la que el guardian lo leia a
+# medias, lo descartaba por ilegible y dejaba de VER a esta sesion: un peer
+# podia entonces hacer 'git checkout' encima sin ser bloqueado. Y SessionStart
+# se re-dispara en startup|resume|clear|compact, asi que la ventana volvia una
+# y otra vez. Con rename, o esta el lock viejo entero o el nuevo entero.
+tmp = sys.argv[6] + '.tmp'
+try:
+    json.dump(data, open(tmp, 'w'))
+    os.replace(tmp, sys.argv[6])
+except Exception:
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
 " "$LOCK_BRANCH_OUT" "$WT_OUT" "$HEAD_OUT" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$CWD_OUT" "$LOCK_DIR/$SESSION_ID.lock" 2>/dev/null || true
 
 if [ -n "$CONTEXT" ]; then
