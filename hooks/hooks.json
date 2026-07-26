@@ -17,6 +17,13 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-heartbeat.sh" }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "matcher": "auto|manual",
@@ -35,6 +42,12 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
+        "hooks": [
+          { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-guardian.sh" }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
         "hooks": [
           { "type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session-guardian.sh" }
         ]

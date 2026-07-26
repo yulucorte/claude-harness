@@ -234,3 +234,158 @@ _(none in flight)_
 [init.sh] starting...
 [init.sh] codebase map -> docs/slate/progress/codebase-map.md
 [init.sh] OK
+
+## 2026-07-21 12:27:45 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-21 19:30:47 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-22 09:16:46 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-22 09:16:47 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-22 09:16:47 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-22 19:30:16 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-23 11:01:36 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-23 14:25:31 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-24 09:37:46 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-24 09:37:47 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-24 09:37:47 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-24 09:37:51 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-24 09:38:11 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-24 17:35:14 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-25 11:06:43 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-25 21:58:59 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-26 09:55:18 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-26 09:55:19 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
+
+## 2026-07-26 09:55:20 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-26 09:59:57 — SessionStart init.sh
+[init.sh] starting...
+[init.sh] codebase map -> docs/slate/progress/codebase-map.md
+[init.sh] OK
+
+## 2026-07-26 09:59:57 — Session end
+# Current work
+
+_(none in flight)_
+
+<!-- This file is auto-managed by slate:tracking-progress.
+     Entries here represent IN-FLIGHT work for the current session.
+     At session end, completed entries are moved to history.md;
+     orphaned entries become CARRY-OVER. -->
