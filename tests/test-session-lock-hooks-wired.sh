@@ -48,3 +48,59 @@ assert any('pre-compact.sh' in c for c in pre_compact_cmds), 'existing pre-compa
 print('OK')
 "
 echo "PASS: all 4 session-lock hooks (incl. session-heartbeat.sh on both PostToolUse and UserPromptSubmit) are wired into hooks.json without disturbing existing entries"
+
+# --- Ningun hook puede emitir permissionDecision "allow" -------------------
+# Un "allow" salta la confirmacion del usuario y las reglas de permisos del
+# proyecto para TODA la llamada. Los hooks de slate solo pueden denegar o
+# avisar; que nadie lo introduzca por descuido en el futuro.
+if grep -rn 'permissionDecision"[[:space:]]*:[[:space:]]*"allow"' "$PLUGIN_ROOT/hooks/" ; then
+  echo "FAIL: un hook emite permissionDecision \"allow\"; los hooks de slate solo deniegan o avisan"
+  exit 1
+fi
+if grep -rn "permissionDecision'[[:space:]]*:[[:space:]]*'allow'" "$PLUGIN_ROOT/hooks/" ; then
+  echo "FAIL: un hook emite permissionDecision 'allow'; los hooks de slate solo deniegan o avisan"
+  exit 1
+fi
+echo "PASS: ningun hook emite permissionDecision \"allow\""
+
+# --- Las tres listas de herramientas de escritura deben coincidir ----------
+# session-guardian.sh (modo fichero), session-heartbeat.sh (registro de
+# 'files') y el matcher de hooks.json describen el MISMO conjunto. Si se
+# desincronizan, el guardian avisa de archivos que el heartbeat nunca anota,
+# o el hook ni siquiera se dispara para una herramienta que si vigila.
+python3 -c "
+import json, re, sys
+
+def tool_tuple(path):
+    src = open(path).read()
+    m = re.search(r'tool in \(([^)]*)\)', src)
+    assert m, 'no se encontro la lista de herramientas de escritura en ' + path
+    return [t.strip().strip('\"').strip(\"'\") for t in m.group(1).split(',') if t.strip()]
+
+g = tool_tuple('$PLUGIN_ROOT/hooks/session-guardian.sh')
+h = tool_tuple('$PLUGIN_ROOT/hooks/session-heartbeat.sh')
+
+d = json.load(open('$HOOKS_JSON'))
+matchers = [grp.get('matcher') for grp in d['hooks'].get('PreToolUse', [])]
+write_matcher = [m for m in matchers if m and 'Write' in m]
+assert len(write_matcher) == 1, 'se esperaba exactamente un matcher de escritura, hay: %r' % matchers
+j = write_matcher[0].split('|')
+
+assert g == h, 'guardian %r != heartbeat %r' % (g, h)
+assert g == j, 'hooks (%r) != matcher de hooks.json (%r)' % (g, j)
+print('write-tool list:', g)
+
+# --- TTL compartido: guardian y session-lock deben cadudar los locks igual --
+gsrc = open('$PLUGIN_ROOT/hooks/session-guardian.sh').read()
+lsrc = open('$PLUGIN_ROOT/hooks/session-lock.sh').read()
+gttl = re.search(r'^\s*TTL\s*=\s*(\d+)', gsrc, re.M)
+lttl = re.search(r'^\s*TTL_SECONDS=(\d+)', lsrc, re.M)
+assert gttl, 'session-guardian.sh no define TTL'
+assert lttl, 'session-lock.sh no define TTL_SECONDS'
+assert gttl.group(1) == lttl.group(1), 'TTL desincronizado: guardian %s vs lock %s' % (gttl.group(1), lttl.group(1))
+gfresh = re.search(r'^\s*FRESH\s*=\s*(\d+)', gsrc, re.M)
+assert gfresh, 'session-guardian.sh no define FRESH'
+assert int(gfresh.group(1)) < int(gttl.group(1)), 'FRESH debe ser menor que TTL'
+print('TTL:', gttl.group(1), 'FRESH:', gfresh.group(1))
+"
+echo "PASS: la lista de herramientas de escritura coincide en guardian, heartbeat y hooks.json; TTL/FRESH coherentes"

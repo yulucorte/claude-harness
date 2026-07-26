@@ -250,4 +250,51 @@ is_deny "$OUT" && { echo "FAIL: un peer en la RAIZ no debe bloquear un checkout 
 echo "PASS: un peer en un worktree enlazado anidado no interfiere en ninguna direccion"
 rm -rf "$REPO"
 
+# --- 16. lock del PEER vacio / truncado / 'null' -> se ignora, nunca revienta ---
+# El caso existente de "lock corrupto" (test-session-lock-records-cwd.sh) cubre
+# el lock PROPIO en SessionStart, que es la ruta de codigo CONTRARIA: alli el
+# hook REESCRIBE el lock; aqui el guardian LEE el de otro. Cada variante va
+# precedida del mismo control positivo (lock intacto -> deny), para que el
+# silencio signifique "el peer ilegible se descarta" y no "la regla no corre".
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+LOCKP="$REPO/.git/slate-sessions/peer.lock"
+for VARIANT in vacio truncado null lista texto; do
+  write_peer_lock "$REPO" "peer" "$REAL"
+  OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+  is_deny "$OUT" || { echo "FAIL: control positivo (lock intacto) no denego antes de la variante '$VARIANT': $OUT"; exit 1; }
+
+  case "$VARIANT" in
+    vacio)    : > "$LOCKP" ;;
+    truncado) printf '{"branch": "main", "cwd": "%s", "fil' "$REAL" > "$LOCKP" ;;
+    null)     printf 'null' > "$LOCKP" ;;
+    lista)    printf '[{"cwd": "%s"}]' "$REAL" > "$LOCKP" ;;
+    texto)    printf 'no soy json' > "$LOCKP" ;;
+  esac
+
+  ERRFILE=$(mktemp)
+  OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK" 2>"$ERRFILE")
+  is_deny "$OUT" && { echo "FAIL: un lock de peer '$VARIANT' no debe denegar (nunca se deniega por falta de datos): $OUT"; rm -f "$ERRFILE"; exit 1; }
+  [ -s "$ERRFILE" ] && { echo "FAIL: un lock de peer '$VARIANT' no debe lanzar excepcion (stderr no vacio): $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
+  rm -f "$ERRFILE"
+done
+echo "PASS: un lock de PEER vacio, truncado, null, lista o basura se descarta sin romper ni denegar (con control positivo antes de cada variante)"
+rm -rf "$REPO"
+
+# --- 17. un cwd de peer RELATIVO se descarta: resolverlo contra el directorio
+#         del proceso del hook (no el del peer) puede inventar una colision ---
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+write_peer_lock "$REPO" "peer" "$REAL"
+OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: control positivo (cwd absoluto) no denego: $OUT"; exit 1; }
+write_peer_lock "$REPO" "peer" "."
+ERRFILE=$(mktemp)
+OUT=$(cd "$REAL" && payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK" 2>"$ERRFILE")
+is_deny "$OUT" && { echo "FAIL: un cwd de peer relativo ('.') no debe denegar: $OUT"; rm -f "$ERRFILE"; exit 1; }
+[ -s "$ERRFILE" ] && { echo "FAIL: un cwd de peer relativo no debe lanzar excepcion: $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
+rm -f "$ERRFILE"
+echo "PASS: un cwd de peer relativo se descarta en vez de resolverse contra el proceso del hook (con control positivo)"
+rm -rf "$REPO"
+
 echo "All guardian tree-op tests passed."
