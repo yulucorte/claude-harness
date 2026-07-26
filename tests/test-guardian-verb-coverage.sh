@@ -48,12 +48,15 @@ age_lock() {
 is_deny() { echo "$1" | grep -q '"permissionDecision": "deny"'; }
 is_warn() { echo "$1" | grep -q '"additionalContext"'; }
 
-# check <cwd> <comando> <veredicto esperado: deny|warn|quiet>
+# check <cwd> <comando> <veredicto esperado: deny|warn|quiet> [subcadena obligatoria]
 #   deny  = permissionDecision deny
 #   warn  = additionalContext y NO deny
 #   quiet = sin salida alguna
+# La subcadena opcional se exige dentro del mensaje: un veredicto correcto con el
+# motivo equivocado deja al agente sin ruta a un comando valido, que es la mitad
+# del trabajo de una denegacion.
 check() {
-  local cwd="$1" cmd="$2" want="$3" out errfile
+  local cwd="$1" cmd="$2" want="$3" needle="${4:-}" out errfile
   errfile=$(mktemp)
   out=$(payload "yo" "$cwd" "$cmd" | bash "$HOOK" 2>"$errfile")
   if [ -s "$errfile" ]; then
@@ -70,7 +73,11 @@ check() {
       [ -z "$out" ] || { echo "FAIL: '$cmd' esperaba SILENCIO, obtuvo: $out"; exit 1; } ;;
     *) echo "FAIL: veredicto desconocido '$want'"; exit 1 ;;
   esac
-  echo "  ok  $want  <- $cmd"
+  if [ -n "$needle" ]; then
+    echo "$out" | grep -qF "$needle" \
+      || { echo "FAIL: '$cmd' dio el veredicto correcto pero el motivo no menciona '$needle': $out"; exit 1; }
+  fi
+  echo "  ok  $want  <- $cmd${needle:+  (motivo menciona: $needle)}"
 }
 
 # =====================================================================
@@ -142,7 +149,8 @@ check "$REAL" "git pull"            quiet
 check "$REAL" "git clean -fd"       quiet
 # el stash es del REPO entero (incluidos los worktrees): trato previo intacto
 check "$REAL" "git stash"           warn
-check "$REAL" "git stash pop"       deny
+check "$REAL" "git stash pop"       deny  "compartido por todo el repo"
+check "$REAL" "git stash apply"     deny  "compartido por todo el repo"
 check "$REAL" "git stash list"      quiet
 rm -rf "$REPO" "$OTHER"
 
@@ -158,6 +166,22 @@ check "$REAL" "git checkout main"  warn
 check "$REAL" "git pull"           warn
 check "$REAL" "git clean -fd"      warn
 check "$REAL" "git stash"          warn
+# La banda tibia NO puede rebajar una denegacion de la regla 3. El stash es del
+# repo entero: un 'pop'/'apply' sin referencia explicita puede sacar el cajon de
+# la otra sesion tenga la antiguedad que tenga su candado, asi que el peer tibio
+# COMPARTIENDO carpeta no puede acabar mas permisivo que uno en otra carpeta
+# (bloque C), que si deniega. Y el motivo tiene que ser el del stash compartido:
+# un mensaje sobre reescritura del arbol no le dice al agente que existe la
+# forma segura 'git stash pop stash@{n}'.
+check "$REAL" "git stash pop"      deny  "compartido por todo el repo"
+check "$REAL" "git stash apply"    deny  "compartido por todo el repo"
+check "$REAL" "git stash drop"     deny  "cajon compartido"
+check "$REAL" "git stash clear"    deny  "cajon compartido"
+# Y la banda tibia tampoco endurece lo que nunca se vigilo
+check "$REAL" "git stash pop stash@{0}"   quiet
+check "$REAL" "git stash apply stash@{1}" quiet
+check "$REAL" "git stash list"     quiet
+check "$REAL" "git stash show"     quiet
 rm -rf "$REPO"
 
 echo "All guardian verb-coverage tests passed."

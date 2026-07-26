@@ -336,7 +336,12 @@ def main():
     # reescriben o borran los archivos que el otro agente esta editando, en vivo y
     # sin que se entere. En carpetas distintas no hay nada que proteger (por eso se
     # respeta un -C/--work-tree explicito).
-    tree_matched = False  # True si algun peer comparte la raiz del worktree
+    # True SOLO si la regla 0 llego a DENEGAR. No basta con que un peer comparta
+    # carpeta: la regla 3 delega en la regla 0 unicamente cuando esta ya ha
+    # bloqueado la operacion. Con un peer tibio la regla 0 solo avisa, y entonces
+    # la regla 3 tiene que poder denegar por su cuenta (el stash es del repo
+    # entero, asi que su peligro no depende de la frescura del candado ajeno).
+    tree_denied = False
     tree_ops = sorted(v.split(":", 1)[1] for v in verbs if v.startswith("tree:"))
     if tree_ops:
         # worktree_root()/_toplevel_cache definidos arriba (compartidos con el
@@ -402,7 +407,6 @@ def main():
             if worktree_root(p) not in targets:
                 continue  # raiz de worktree distinta: ya estan aislados
             matches.append(d)
-        tree_matched = bool(matches)
         if matches:
             # El peer MAS FRESCO decide el veredicto: si al menos uno esta vivo
             # con certeza, se deniega; solo se avisa si TODOS los que comparten
@@ -411,6 +415,7 @@ def main():
             freshest = min(matches, key=lambda d: now - d.get("_mtime", 0))
             age = int(now - freshest.get("_mtime", 0))
             if age <= FRESH:
+                tree_denied = True
                 denies.append(
                     "Otra sesion de Claude Code esta viva en ESTA MISMA carpeta (candado %s, "
                     "actividad hace %ss). 'git %s' reescribiria o borraria en disco los archivos "
@@ -474,10 +479,13 @@ def main():
     if "stash" in verbs:
         sub = stash.get("sub") or ""
         explicit = stash.get("explicit", False)
-        if stash.get("tree") and tree_matched:
-            # La regla 0 ya decidio esta invocacion (deny con un peer fresco en la
-            # misma carpeta, aviso con uno tibio): comparte carpeta, que es el dano
-            # mayor y el mensaje mas concreto. No se duplica aqui.
+        if stash.get("tree") and tree_denied:
+            # La regla 0 ya DENEGO esta invocacion por compartir carpeta con un
+            # peer fresco, que es el dano mayor y el mensaje mas concreto: no se
+            # duplica aqui. Se exige la denegacion, no la mera presencia de un
+            # peer: si la regla 0 solo aviso (banda tibia), esta regla debe seguir
+            # su curso, o un peer tibio en la MISMA carpeta acabaria mas permisivo
+            # que uno en otra carpeta -- justo al reves de lo que toca.
             pass
         elif sub in ("list", "show"):
             pass  # read-only
