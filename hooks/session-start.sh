@@ -59,13 +59,16 @@ if [ ! -d "$STATE/progress" ] || [ ! -d "$STATE/features" ]; then
   exit 0
 fi
 
-# Run init.sh if present, append output to history
+# Run init.sh if present. Its output is DISCARDED on success and only surfaces
+# on stderr when init.sh fails.
+#
+# Until 1.8.0 this appended init.sh's output to history.md — and history_tail()
+# below reads the tail of that same file. The hook fed itself: every session
+# injected "[init.sh] OK" as "History (reciente)", and real work was buried.
+# Measured on a live project: 1437 of 6265 history lines were init.sh noise.
 if [ -f "$PROJECT_ROOT/init.sh" ]; then
-  {
-    echo ""
-    echo "## $(date '+%Y-%m-%d %H:%M:%S') — SessionStart init.sh"
-    bash "$PROJECT_ROOT/init.sh" 2>&1 || true
-  } >> "$STATE/progress/history.md" 2>/dev/null || true
+  INIT_OUT=$(bash "$PROJECT_ROOT/init.sh" 2>&1) \
+    || printf 'slate: init.sh failed:\n%s\n' "$INIT_OUT" >&2
 fi
 
 # in-progress as an INDEX: one line per FEAT (ID + title + status). Full
@@ -92,17 +95,30 @@ if [ -f "$STATE/bugs/open.md" ]; then
   [ "${BUG_COUNT:-0}" -gt 0 ] 2>/dev/null && BUGS_LINE="## Bugs abiertos: ${BUG_COUNT} (${BUG_IDS})"
 fi
 
+# The ideas inbox is a DEPOSIT, not a queue. Nagging "run /ideas-triage" every
+# single session trains the reader to skip that whole region of the startup
+# message — measured: 28 ideas, 0 triages, the line ignored 28 times. Surface it
+# only once the inbox is genuinely oversized (override with SLATE_IDEAS_NAG_AT).
 IDEAS_LINE=""
 if [ -f "$STATE/ideas/inbox.md" ]; then
   IDEA_COUNT=$(grep -c '^- ' "$STATE/ideas/inbox.md" 2>/dev/null || true)
-  [ "${IDEA_COUNT:-0}" -gt 0 ] 2>/dev/null && IDEAS_LINE="## Ideas pendientes: ${IDEA_COUNT} (correr /ideas-triage)"
+  NAG_AT="${SLATE_IDEAS_NAG_AT:-40}"
+  [ "${IDEA_COUNT:-0}" -ge "$NAG_AT" ] 2>/dev/null \
+    && IDEAS_LINE="## Ideas acumuladas: ${IDEA_COUNT} (buzón grande; /ideas-triage cuando convenga)"
 fi
 
-# Last N non-empty lines of history.md.
+# Last N lines of history.md that carry actual work.
+#
+# Projects that ran slate < 1.8.0 have history files where most lines are hook
+# exhaust: init.sh output, PreCompact stubs, and empty session-end blocks that
+# only copied the current.md template. Filtering here fixes those files without
+# rewriting them — nothing is deleted, it just stops being injected.
 history_tail() {
   local n="$1"
   [ -f "$STATE/progress/history.md" ] || return 0
-  grep -v '^[[:space:]]*$' "$STATE/progress/history.md" 2>/dev/null | tail -n "$n" || true
+  grep -v '^[[:space:]]*$' "$STATE/progress/history.md" 2>/dev/null \
+    | grep -vE '^\[init\.sh\]|^## .* — SessionStart init\.sh$|^## .* — PreCompact triggered|^# Current work$|^_\(none in flight\)_$|^[[:space:]]*<!-- This file is auto-managed by slate|^[[:space:]]*(Entries here represent IN-FLIGHT|At session end, completed entries|orphaned entries become CARRY-OVER)|^[[:space:]]*-->[[:space:]]*$' \
+    | tail -n "$n" || true
 }
 
 case "$SOURCE" in

@@ -29,7 +29,7 @@ The install script copies templates into the current project. It is idempotent a
 | Path | Purpose |
 |---|---|
 | `AGENTS.md` | Protocol the agent reads at session start |
-| `init.sh` | Runs on every SessionStart to refresh `docs/slate/progress/codebase-map.md` |
+| `init.sh` | Runs on every SessionStart. Yours to edit — project setup goes here |
 | `docs/slate/progress/current.md` | In-flight work for the current session |
 | `docs/slate/progress/history.md` | Append-only session log |
 | `docs/slate/progress/subagents/` | One file per dispatched subagent |
@@ -56,7 +56,8 @@ The install script copies templates into the current project. It is idempotent a
 - **Markdown only.** No JSON, YAML, or SQLite state files. Anything the agent writes is anything you can `grep`.
 - **Append-only `done.md`.** Edits there are forbidden. Successors carry a `Supersedes: FEAT-XXX` line.
 - **Immutable FEAT IDs.** Once assigned, never renumber.
-- **3 hooks, 6 skills.** If you cannot justify a new one in one sentence, it does not belong here.
+- **6 hooks, 6 skills.** If you cannot justify one in a sentence, it does not belong here — and if nobody reads what it writes, it stops being a hook. 1.8.0 removed `pre-compact.sh` and the codebase map on exactly that test.
+- **Hooks may not shout.** A line injected at every session start that nobody acts on trains the reader to skip that whole region. Surface state on a threshold, not on a timer.
 
 ## License
 

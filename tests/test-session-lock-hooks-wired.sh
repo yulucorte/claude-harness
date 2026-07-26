@@ -42,12 +42,22 @@ assert 'Write|Edit|NotebookEdit' in pre_group_matchers, 'PreToolUse for session-
 file_mode_cmds = [entry['command'] for g in pre_groups if g.get('matcher') == 'Write|Edit|NotebookEdit' for entry in g.get('hooks', [])]
 assert any('session-guardian.sh' in c for c in file_mode_cmds), 'session-guardian.sh not wired into the Write|Edit|NotebookEdit PreToolUse matcher'
 
-pre_compact_cmds = cmds('PreCompact')
-assert any('pre-compact.sh' in c for c in pre_compact_cmds), 'existing pre-compact.sh must stay untouched'
+# pre-compact.sh was removed in 1.8.0: it read CLAUDE_TRANSCRIPT_PATH, which the
+# harness never sets, so all 58 firings on a live project logged
+# 'no transcript available' and snapshotted nothing. Assert it stays gone.
+assert 'PreCompact' not in h, 'PreCompact hook was removed in 1.8.0; do not reintroduce it'
+allcmds = [e['command'] for g in h.values() for grp in [g] for gg in grp for e in gg.get('hooks', [])]
+assert not any('pre-compact.sh' in c for c in allcmds), 'pre-compact.sh must not be wired anywhere'
 
 print('OK')
 "
 echo "PASS: all 4 session-lock hooks (incl. session-heartbeat.sh on both PostToolUse and UserPromptSubmit) are wired into hooks.json without disturbing existing entries"
+
+if [ -e "$PLUGIN_ROOT/hooks/pre-compact.sh" ]; then
+  echo "FAIL: hooks/pre-compact.sh reaparecio; se elimino en 1.8.0 (nunca capturo un transcript)"
+  exit 1
+fi
+echo "PASS: pre-compact.sh sigue eliminado"
 
 # --- Ningun hook puede emitir permissionDecision "allow" -------------------
 # Un "allow" salta la confirmacion del usuario y las reglas de permisos del

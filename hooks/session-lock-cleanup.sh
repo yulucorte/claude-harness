@@ -29,5 +29,14 @@ except Exception:
     print('')" 2>/dev/null || true)
 [ -z "$SESSION_ID" ] && exit 0
 
-rm -f "$GIT_COMMON_DIR/slate-sessions/$SESSION_ID.lock" 2>/dev/null || true
+LOCK_DIR="$GIT_COMMON_DIR/slate-sessions"
+rm -f "$LOCK_DIR/$SESSION_ID.lock" 2>/dev/null || true
+
+# Reap locks left behind by sessions that never reached SessionEnd (crash, window
+# closed, kill). Nothing removed them before: cleanup only ever deleted its own
+# lock and the TTL merely made readers ignore the rest, so slate-sessions/ grew
+# forever. Measured: 13 dead locks in one project, the oldest 6 days old, and a
+# 51-minute-old ghost still announcing itself as "another active session".
+# TTL here must match session-guardian.sh / session-lock.sh (900s).
+find "$LOCK_DIR" -maxdepth 1 -name '*.lock' -type f -mmin +15 -delete 2>/dev/null || true
 exit 0

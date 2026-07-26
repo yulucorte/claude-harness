@@ -31,8 +31,15 @@ OUTPUT=$(echo '{"source":"startup"}' | CLAUDE_PROJECT_ROOT="$TMPDIR_PROJECT" bas
 echo "$OUTPUT" | grep -q "Bugs abiertos: 2 (BUG-001,BUG-002)" || { echo "FAIL: bug count/IDs missing from output. Got: $OUTPUT"; exit 1; }
 echo "PASS: bug count injected correctly"
 
-echo "$OUTPUT" | grep -q "Ideas pendientes: 1" || { echo "FAIL: idea count missing from output. Got: $OUTPUT"; exit 1; }
-echo "PASS: idea count injected correctly"
+# 1.8.0: el buzon de ideas es un DEPOSITO, no una cola. Una sola idea no se
+# anuncia — el aviso solo aparece al superar SLATE_IDEAS_NAG_AT (def. 40).
+# El umbral en si se prueba en test-hygiene-1.8.0.sh (28 -> silencio, 41 -> aviso).
+echo "$OUTPUT" | grep -q "Ideas" && { echo "FAIL: 1 idea no debe generar aviso. Got: $OUTPUT"; exit 1; }
+echo "PASS: 1 idea no genera aviso (buzon = deposito, no cola)"
+
+OUTPUT_NAG=$(echo '{"source":"startup"}' | SLATE_IDEAS_NAG_AT=1 CLAUDE_PROJECT_ROOT="$TMPDIR_PROJECT" bash "$HOOK")
+echo "$OUTPUT_NAG" | grep -q "Ideas acumuladas: 1" || { echo "FAIL: con el umbral en 1 deberia avisar. Got: $OUTPUT_NAG"; exit 1; }
+echo "PASS: SLATE_IDEAS_NAG_AT ajusta el umbral del aviso"
 
 # --- Test: no bugs/ideas dirs -> hook does not error, no bug/idea lines ---
 TMPDIR_PROJECT2=$(mktemp -d)
@@ -41,7 +48,7 @@ touch "$TMPDIR_PROJECT2/docs/slate/progress/history.md" "$TMPDIR_PROJECT2/docs/s
 
 OUTPUT2=$(echo '{"source":"startup"}' | CLAUDE_PROJECT_ROOT="$TMPDIR_PROJECT2" bash "$HOOK")
 echo "$OUTPUT2" | grep -q "Bugs abiertos" && { echo "FAIL: bug line present when bugs/ absent"; exit 1; }
-echo "$OUTPUT2" | grep -q "Ideas pendientes" && { echo "FAIL: idea line present when ideas/ absent"; exit 1; }
+echo "$OUTPUT2" | grep -q "Ideas" && { echo "FAIL: idea line present when ideas/ absent"; exit 1; }
 echo "PASS: no bug/idea lines when directories absent, hook did not error"
 
 # --- Test: bugs/open.md and ideas/inbox.md exist with template-only content
@@ -55,7 +62,7 @@ cp "$PLUGIN_ROOT/templates/ideas/inbox.md" "$TMPDIR_PROJECT3/docs/slate/ideas/in
 
 OUTPUT3=$(echo '{"source":"startup"}' | CLAUDE_PROJECT_ROOT="$TMPDIR_PROJECT3" bash "$HOOK")
 echo "$OUTPUT3" | grep -q "Bugs abiertos" && { echo "FAIL: bug line present for template-only bugs/open.md. Got: $OUTPUT3"; exit 1; }
-echo "$OUTPUT3" | grep -q "Ideas pendientes" && { echo "FAIL: idea line present for template-only ideas/inbox.md. Got: $OUTPUT3"; exit 1; }
+echo "$OUTPUT3" | grep -q "Ideas" && { echo "FAIL: idea line present for template-only ideas/inbox.md. Got: $OUTPUT3"; exit 1; }
 echo "PASS: no bug/idea lines when files contain only template content"
 
 rm -rf "$TMPDIR_PROJECT" "$TMPDIR_PROJECT2" "$TMPDIR_PROJECT3"
