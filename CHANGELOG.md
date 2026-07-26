@@ -16,10 +16,18 @@ La protección pasa a `session-guardian`, que sí se hace cumplir:
   además de `PostToolUse`: una sesión cuyo humano está leyendo o escribiendo,
   sin usar herramientas, ya no se confunde con una sesión muerta. Los umbrales
   de vida de 300 s / 900 s no cambian.
-- **Nuevo:** se deniegan `checkout`, `switch`, `restore` y `reset --hard`/`--merge`/`--keep`
-  cuando otra sesión viva comparte la misma carpeta — las únicas operaciones que
-  reescriben en disco el trabajo ajeno (`reset --soft`/`--mixed` solo tocan
-  HEAD/índice y quedan permitidos). La carpeta se compara por la RAÍZ del
+- **Nuevo:** se deniegan, cuando otra sesión viva comparte la misma carpeta, las
+  operaciones que reescriben o borran en disco el trabajo ajeno:
+  `checkout`, `switch`, `restore`, `reset --hard`/`--merge`/`--keep`, `pull`,
+  `clean` con `-f`/`-fd`/`-fdx`/`--force`, y las formas destructivas de `stash`
+  (`git stash`, `stash push`, `stash save`, `stash -u`, y `stash pop`/`apply`
+  sin una referencia `stash@{n}` explícita). Los tres últimos importan
+  especialmente porque git **no** los frena por su cuenta: git se niega a un
+  `checkout`/`merge` que pisaría archivos modificados, pero `clean -f` y
+  `stash` destruyen sin preguntar. Quedan permitidos `reset --soft`/`--mixed`
+  (solo tocan HEAD/índice), `clean` sin fuerza (git ya lo rechaza),
+  `stash list`/`stash show`, y `stash pop`/`apply stash@{n}` con referencia
+  explícita. La carpeta se compara por la RAÍZ del
   worktree de git (`git rev-parse --show-toplevel`, memoizada por carpeta), no
   por el string crudo de `cwd`: así `git -C <subcarpeta> checkout` se deniega
   correctamente con un peer en la raíz, `git -C <otro-repo> checkout` no
@@ -40,12 +48,34 @@ La protección pasa a `session-guardian`, que sí se hace cumplir:
   borrar a mano con `git worktree remove` + `git branch -D`.
 
 Los locks escritos por versiones anteriores (sin `cwd` ni `files`) se ignoran
-para las reglas nuevas y nunca provocan una denegación.
+para las reglas nuevas y nunca provocan una denegación. Una sesión con HEAD
+desprendido (`detached HEAD`) también se registra, con `branch` vacío: su árbol
+de trabajo se destruye igual que cualquier otro.
 
-**Límite conocido:** esto hace que el trabajo paralelo inseguro falle de forma
-ruidosa, no que sea seguro. Para trabajar en ramas distintas a la vez hay que
-abrir cada sesión en su propia carpeta; el aislamiento sólo funciona si la
-sesión arranca allí.
+**Límites conocidos** (declarados, no ocultos):
+
+- Esto hace que el trabajo paralelo inseguro falle de forma **ruidosa**, no que
+  sea seguro. Para trabajar en ramas distintas a la vez hay que abrir cada
+  sesión en su propia carpeta; el aislamiento sólo funciona si la sesión
+  arranca allí.
+- **El clasificador lee tokens del comando, no ejecuta nada.** Un
+  `bash -c "git checkout main"`, un `sh -c ...`, un alias o cualquier git
+  dentro de un script `.sh` son **invisibles** para él. Como el aislamiento
+  automático ya no existe, esta denegación es la ÚNICA barrera contra la clase
+  catastrófica: si se sortea, no hay red debajo.
+- **Las escrituras hechas vía Bash no se anotan en `files`.** Un `sed -i`, una
+  redirección con heredoc o un `cp` modifican archivos sin pasar por
+  `Write`/`Edit`/`NotebookEdit`, que son las únicas herramientas que el
+  heartbeat registra. El aviso por archivo compartido, por tanto, **subreporta
+  por construcción**: avisa de lo que ve, nunca de todo lo que pasa.
+- **No se vigilan** `git revert`, `git am`, `git apply` ni `git rm -r`. Todos
+  pueden tocar el árbol ajeno; se dejan fuera a propósito porque su uso normal
+  es deliberado y acotado, y denegarlos generaría fricción constante. Queda
+  anotado para que sea una decisión revisable y no un olvido
+  (`tests/test-guardian-verb-coverage.sh` fija su silencio como esperado).
+- **Ventana de hasta 5 minutos** en la que un candado huérfano puede denegar un
+  cambio de rama legítimo. Salida: ejecutar el comando en una terminal fuera de
+  Claude, o borrar el candado de `$(git rev-parse --git-common-dir)/slate-sessions/`.
 
 ## 1.6.1 — 2026-07-21
 
