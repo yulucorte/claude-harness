@@ -415,8 +415,9 @@ def main():
                     "Otra sesion de Claude Code esta viva en ESTA MISMA carpeta (candado %s, "
                     "actividad hace %ss). 'git %s' reescribiria o borraria en disco los archivos "
                     "que esa sesion esta editando ahora mismo, sin que su agente se entere. "
-                    "Bloqueado por session-guardian. Trabaja sobre la rama actual, o abre una "
-                    "sesion nueva en otra carpeta si necesitas otra rama."
+                    "Bloqueado por session-guardian. Sigue trabajando sobre el arbol tal como "
+                    "esta (editar archivos distintos es seguro), o abre una sesion de Claude "
+                    "Code NUEVA en otra carpeta si necesitas trabajar en paralelo de verdad."
                     % (freshest["_id"][:8], age, tree_ops[0])
                 )
             else:
