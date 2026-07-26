@@ -13,12 +13,43 @@ multiple lifecycle stages.
 Trigger: the user says something like "anota esta idea...", "se me ocurrió
 que...", or runs `/idea "<text>"`.
 
-Action: append one line to `docs/slate/ideas/inbox.md`:
+### Step 1 — is it an idea, or something already broken?
+
+The inbox is a DEPOSIT for future work. Anything that is **already wrong right
+now** does not belong there: it gets buried and nobody reads it again. Route it
+instead:
+
+| What it is | Goes to |
+|---|---|
+| Something to build later | `docs/slate/ideas/inbox.md` |
+| Something broken in code | `docs/slate/bugs/open.md` via `tracking-bugs` |
+| Broken config/data in production, no code change | `docs/slate/bugs/open.md`, `Where: <screen/setting>` |
+| Docs or `CLAUDE.md` contradicting the code | `docs/slate/bugs/open.md` — it misleads every future session |
+
+Decide silently from the text; only ask the user when it is genuinely
+ambiguous. A known defect with a trigger ("breaks when the first non-Colombian
+tenant signs up") is a bug with a deadline you do not control, not an idea.
+
+### Step 2 — check for a duplicate
+
+`grep` the inbox for the 2–3 most distinctive words of the new idea before
+writing:
+
+    grep -in '<keyword>' docs/slate/ideas/inbox.md
+
+If a line already covers it: do NOT append a second one. Either leave it alone
+or enrich the existing line, and say so in your one-line confirmation. Capturing
+without reading is how an inbox of 28 lines turns out to hold 21 ideas and 7
+duplicate pairs.
+
+### Step 3 — append
+
+One line, verbatim, no reformatting:
 
     - YYYY-MM-DD HH:MM — <raw idea text, verbatim>
 
-Do not categorize, prioritize, or ask clarifying questions at capture time.
-The whole point is zero interruption to the current flow.
+Do not categorize, prioritize, or ask clarifying questions beyond step 1.
+The whole point is near-zero interruption to the current flow.
 
 ## Triage (explicit, on demand)
 
@@ -42,8 +73,19 @@ Steps:
 
 See `docs/idea-format.md` for the exact entry formats.
 
+## Triage is on-demand, never nagged
+
+The inbox is a deposit, not a queue. SessionStart stays silent about it until it
+crosses `SLATE_IDEAS_NAG_AT` (default 40). Do not prompt the user to run
+`/ideas-triage`: a reminder that gets ignored every session trains them to skip
+that whole region of the startup message. If something in the inbox needs
+attention today, it is because it was MISFILED (see step 1) — surface that one
+entry, not the backlog.
+
 ## Anti-patterns
 
+- DO NOT file a known defect as an idea. If it is already broken, it is a bug.
+- DO NOT append without grepping first. Duplicates are the inbox's failure mode.
 - DO NOT categorize or prioritize at capture time — that's triage's job.
 - DO NOT edit or delete existing entries in `docs/slate/ideas/triaged.md`. It is
   append-only.

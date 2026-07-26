@@ -1,5 +1,121 @@
 # Changelog
 
+## 1.8.0 — 2026-07-26
+
+**Auditoría de uso real (FEAT-006).** Se midió el plugin contra un proyecto que
+lo usa de verdad (1244 commits, 4 meses) en vez de contra su propio repo. Varias
+funciones llevaban meses sin funcionar y nadie lo había notado, porque fallaban
+en silencio.
+
+### Corregido — el historial se envenenaba a sí mismo
+
+`session-start.sh` anexaba la salida de `init.sh` a `history.md` y acto seguido
+inyectaba el final de ese mismo fichero como «History (reciente)». El hook se
+leía a sí mismo: **cada sesión arrancaba con `[init.sh] OK` como su historial**.
+Medido: 1437 de 6265 líneas del historial eran ese eco, y 46 de las últimas 50
+líneas útiles eran ruido.
+
+- La salida de `init.sh` ya no toca `history.md`; solo aparece en stderr si falla.
+- `history_tail()` filtra además el ruido heredado (salida de init, avisos de
+  PreCompact, bloques de plantilla vacía), así que **los proyectos ya
+  contaminados se arreglan sin reescribir ni borrar nada**.
+
+### Corregido — cierres de sesión vacíos
+
+La comprobación de «¿hay trabajo en `current.md`?» estaba anclada a principio de
+línea, así que las líneas *indentadas* del comentario de la plantilla contaban
+como trabajo real. Medido: **180 de 270 bloques de cierre eran la plantilla
+vacía copiada**. Ahora se descartan los bloques `<!-- ... -->` completos antes de
+juzgar.
+
+### Eliminado
+
+- **`pre-compact.sh`**. Leía `CLAUDE_TRANSCRIPT_PATH`, que el harness nunca
+  define, y su `matcher` venía de un argumento que `hooks.json` nunca pasaba.
+  Sus 58 disparos en producción escribieron 58 veces «no transcript available» y
+  cero copias. Se elimina el hook y su entrada `PreCompact`.
+- **El mapa del código** (`docs/slate/progress/codebase-map.md`). 677 líneas
+  regeneradas en cada arranque; ningún hook lo inyectaba, ninguna skill lo
+  mencionaba y `.gitignore` lo excluía. Cero lectores.
+- **El commit automático de fin de sesión.** Producía 248 de 1244 commits —uno de
+  cada cinco— titulados «auto: session-end checkpoint», casi todos vacíos. El
+  estado se commitea junto al trabajo que describe, como cualquier otro archivo.
+
+### Corregido — `session-guardian` denegaba trabajo legítimo
+
+`classify()` buscaba el primer token literal `git` en cualquier posición del
+segmento y trataba todo `checkout`/`switch`/`restore` como reescritura del árbol.
+Ahora:
+
+- `git` debe ser **el comando** del segmento (se saltan asignaciones `VAR=x` y
+  envoltorios como `sudo`). Deja de denegar `man git checkout` y `echo git ...`.
+- Se cortan los comentarios: `ls  # git checkout main` ya no se deniega.
+- `git checkout -b <rama>` y `git switch -c <rama>` **sin punto de partida** no
+  tocan el árbol de trabajo: se permiten. Con punto de partida
+  (`-b x origin/main`) siguen denegándose.
+- `git restore --staged` solo toca el índice: se permite. Con `--worktree` sigue
+  denegándose.
+- `git clean` deja de leer como bandera lo que va después de `--`
+  (`git clean -- -foo` era un falso positivo).
+
+Lo que seguía protegiendo, sigue protegiendo: `checkout`/`switch` de rama,
+`reset --hard`, `clean -f`, `stash` destructivo, `pull` y `restore` de archivos.
+
+### Corregido — los candados de sesión no se recogían nunca
+
+`session-lock-cleanup.sh` solo borraba el candado propio; el TTL hacía que los
+demás se *ignoraran*, pero nadie los borraba. Medido: 13 candados muertos en un
+proyecto, el más viejo de 6 días, y un fantasma de 51 minutos que seguía
+anunciándose como «otra sesión activa». Ahora se recogen los vencidos (>15 min)
+tanto al arrancar como al cerrar.
+
+También: la ruta del candado se pasa por `argv` en vez de interpolarse en el
+código Python, así que una ruta de repo con apóstrofo deja de romper el parseo.
+
+### Cambiado — el buzón de ideas es un depósito, no una cola
+
+`SessionStart` ya no reclama «correr /ideas-triage» en cada arranque: un aviso
+ignorado sesión tras sesión (28 ideas, 0 triages, 28 avisos ignorados) entrena a
+saltarse esa zona entera del mensaje. Ahora solo aparece al superar
+`SLATE_IDEAS_NAG_AT` (por defecto 40).
+
+A cambio, la captura se vuelve más exigente en lo que sí importa:
+
+- **Clasificar antes de guardar.** Lo que ya está roto (bug, configuración de
+  producción mal puesta, documentación que contradice al código) va a
+  `bugs/open.md`, no al buzón. Se encontró un bloqueo de facturación en
+  producción archivado como «idea» en el puesto 28.
+- **Buscar duplicados antes de escribir.** 28 líneas del buzón resultaron ser 21
+  ideas y 7 pares duplicados, porque se capturaba sin leer.
+
+### Corregido — el cierre de sesión descartaba encabezados de trabajo
+
+Encontrado al revisar el propio 1.8.0: la comprobación de contenido descartaba
+**toda** línea que empezara por `#`, así que un `### FEAT-XXX en vuelo` —el
+formato que escribe `tracking-progress`— no contaba como trabajo. Ahora solo se
+ignora el `# ` del título. Además, un `<!--` sin cerrar ya no puede tragarse lo
+que venga detrás: si el comentario nunca cierra, su contenido vuelve a contar.
+
+### Tests
+
++41 aserciones en dos ficheros nuevos (`test-hygiene-1.8.0.sh`,
+`test-guardian-false-positives.sh`) que fijan cada defecto medido arriba,
+incluida la contraparte que importa: los 15 comandos que el guardian debe seguir
+denegando (`checkout`, `reset --hard`, `clean -f`, `stash`, `pull`, y los mismos
+tras `sudo`/`env`/`FOO=bar`).
+
+Se elimina `test-init-codebase-map.sh` (probaba la generación del mapa) y se
+actualiza `test-guardian-tree-ops.sh`, que usaba `git checkout -b X` como
+tree-op canónico para probar la resolución de carpetas; ahora usa un cambio de
+rama real.
+
+### Alcance declarado del guardian
+
+Queda escrito en el código: el guardian cubre al agente honesto, no a un evasor.
+`sh -c "git checkout main"`, `xargs git checkout` y `/usr/bin/git checkout` pasan
+—igual que en 1.7.0— porque el hook inspecciona una cadena, no ejecuta un shell.
+Cubrir eso a medias solo daría sensación falsa de red.
+
 ## 1.7.0 — 2026-07-25
 
 **Seguridad real entre sesiones paralelas (FEAT-003).** El aislamiento

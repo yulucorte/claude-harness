@@ -48,6 +48,13 @@ CURRENT_BRANCH="$(git branch --show-current 2>/dev/null)"
 TTL_SECONDS=900
 NOW=$(date +%s)
 
+# Purge expired locks BEFORE looking for collisions. Sessions that die without
+# SessionEnd (crash, closed window) used to leave their lock forever: readers
+# skipped it via TTL but nobody deleted it, so the directory only grew. Reaping
+# here also means a session that starts right after a crash sees a clean slate
+# instead of announcing a peer that no longer exists.
+find "$LOCK_DIR" -maxdepth 1 -name '*.lock' -type f -mmin +15 -delete 2>/dev/null || true
+
 COLLISION=0
 for lock in "$LOCK_DIR"/*.lock; do
   [ -e "$lock" ] || continue
@@ -58,11 +65,13 @@ for lock in "$LOCK_DIR"/*.lock; do
   AGE=$((NOW - MTIME))
   [ "$AGE" -gt "$TTL_SECONDS" ] && continue   # stale, ignore
 
-  LOCK_BRANCH=$(python3 -c "import json
+  # La ruta va por argv, NO interpolada en el fuente: un repo cuya ruta lleve
+  # un apostrofo ("/Users/x/O'Brien/repo") rompia el parseo de python.
+  LOCK_BRANCH=$(python3 -c "import json,sys
 try:
-    print(json.load(open('$lock')).get('branch',''))
+    print(json.load(open(sys.argv[1])).get('branch',''))
 except Exception:
-    print('')" 2>/dev/null || true)
+    print('')" "$lock" 2>/dev/null || true)
 
   # Dos ramas VACIAS no son la misma rama: son dos sesiones con HEAD
   # desprendido, que no comparten reclamacion alguna. Sin esta guarda

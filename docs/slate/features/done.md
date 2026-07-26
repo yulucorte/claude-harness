@@ -89,3 +89,31 @@ La revisión final de la rama (2026-07-25) encontró que el conjunto vigilado de
 Verificación 2026-07-25: `bash scripts/self-test.sh` → `Results: 22 pass, 0 fail`. Los tests nuevos de esta ronda se vieron FALLAR contra el código anterior antes de arreglar nada: tabla de veredictos por verbo (`test-guardian-verb-coverage.sh`), sesión en HEAD desprendido de punta a punta (`test-session-lock-detached-head.sh`), matriz de payloads malformados sobre los dos hooks afirmando stderr vacío (`test-hooks-malformed-payload.sh`), escritura atómica del candado y candado de PEER corrupto/vacío/`null` a la hora de decidir.
 
 Límites conocidos, declarados en `CHANGELOG.md` y en la spec: el clasificador lee tokens, así que un `bash -c "git checkout main"` es invisible y esta denegación es ya la única barrera contra la clase catastrófica; las escrituras vía Bash (`sed -i`, heredoc, `cp`) nunca llegan a `files`, así que el aviso por archivo compartido subreporta por construcción; `git revert`/`am`/`apply`/`rm -r` no se vigilan a propósito. El paralelismo real entre ramas sigue sin cubrirse: es FEAT-004.
+
+## FEAT-006: Auditoría de uso real — higiene de hooks y falsos positivos del guardian
+- **Status**: done
+- **Created**: 2026-07-26
+- **Updated**: 2026-07-26
+- **Verified**: 2026-07-26
+- **Plan**: none (auditoría dirigida sobre un proyecto en uso real, no un plan previo)
+- **Branch**: feat/feat-006-hygiene-and-guardian-fixes
+- **Goal**: medir el plugin contra phlou-app (1244 commits, 4 meses) en vez de contra su propio repo, y corregir lo que llevaba meses fallando en silencio
+- **Verification**: `bash scripts/self-test.sh` — 23 ficheros, 0 fallos (41 aserciones nuevas)
+- **Tags**: hooks, guardian, ideas, higiene
+
+### Subtasks
+- [x] FEAT-006.1: `session-start.sh` deja de anexar la salida de `init.sh` a `history.md` (el hook se leía a sí mismo)
+- [x] FEAT-006.2: `history_tail()` filtra el ruido heredado, arreglando proyectos ya contaminados sin reescribirlos
+- [x] FEAT-006.3: `session-end.sh` descarta bloques `<!-- -->` antes de decidir si hay trabajo (180/270 bloques eran plantilla vacía)
+- [x] FEAT-006.4: eliminado el commit automático de fin de sesión (248/1244 commits)
+- [x] FEAT-006.5: eliminado `pre-compact.sh` (58 disparos, 58 fallos) y su entrada `PreCompact`
+- [x] FEAT-006.6: eliminada la generación de `codebase-map.md` (677 líneas por arranque, cero lectores)
+- [x] FEAT-006.7: `classify()` exige `git` como comando del segmento y corta comentarios
+- [x] FEAT-006.8: `checkout -b` / `switch -c` sin punto de partida y `restore --staged` dejan de denegarse
+- [x] FEAT-006.9: `git clean` deja de leer como bandera lo que sigue a `--`
+- [x] FEAT-006.10: recogida de candados vencidos al arrancar y al cerrar; ruta del candado por `argv`
+- [x] FEAT-006.11: el aviso del buzón de ideas pasa a umbral (`SLATE_IDEAS_NAG_AT`, def. 40)
+- [x] FEAT-006.12: `managing-ideas` clasifica bug vs idea y busca duplicados antes de escribir
+- [x] FEAT-006.13: +41 aserciones en dos ficheros de test nuevos
+- [x] FEAT-006.14: `has_work()` deja de descartar encabezados `###` (formato de `tracking-progress`) y un `<!--` sin cerrar ya no traga el trabajo posterior
+- [x] FEAT-006.15: envoltorios `env`/`sudo` cubiertos en el parser; alcance del guardian documentado en el código

@@ -25,6 +25,8 @@ import sys, os, json, re, shlex, subprocess, time, glob
 
 TTL = 900  # seconds; matches session-lock.sh stale-lock reaping
 FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
+# Asignaciones de entorno que preceden al comando: 'FOO=bar git status'.
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
 
 def main():
@@ -92,6 +94,30 @@ def main():
 
 
     # --- classify the command: which sensitive git verbs appear? -----------------
+    def touches_worktree(verb, args):
+        """False para las formas de checkout/switch/restore que NO tocan disco.
+
+        Hasta 1.7.0 cualquier 'checkout'/'switch'/'restore' contaba como
+        reescritura del arbol. Eso denegaba 'git checkout -b rama-nueva' (que
+        solo crea una rama sobre HEAD y deja los archivos intactos) y
+        'git restore --staged f' (que solo toca el indice). Ambos son
+        cotidianos y ninguno pisa el trabajo de otra sesion.
+        """
+        positional = [a for a in args if not a.startswith("-")]
+        if verb == "restore":
+            # --staged sin --worktree se queda en el indice.
+            if "--staged" in args or "-S" in args:
+                return ("--worktree" in args) or ("-W" in args)
+            return True
+        # checkout/switch: crear rama SIN punto de partida no mueve el arbol.
+        # Con punto de partida ('checkout -b x origin/main') si lo mueve.
+        creates = any(a in ("-b", "-B", "-c", "-C", "--create", "--force-create")
+                      for a in args)
+        if creates:
+            return len(positional) > 1
+        return True
+
+
     def classify(command):
         verbs = set()
         stash = {"sub": None, "explicit": False, "tree": False}
@@ -102,12 +128,32 @@ def main():
         tree_hits = []
         for seg in re.split(r"[;&|\n]+", command):
             try:
-                toks = shlex.split(seg)
+                # comments=True corta todo lo que sigue a '#': sin esto,
+                # 'ls  # git checkout main' se denegaba por el comentario.
+                toks = shlex.split(seg, comments=True)
             except ValueError:
                 toks = seg.split()
-            gi = next((i for i, t in enumerate(toks) if t == "git"), None)
-            if gi is None:
+            # 'git' tiene que ser el COMANDO del segmento, no una palabra suelta
+            # dentro de el. Hasta 1.7.0 se buscaba el primer token igual a "git"
+            # en cualquier posicion, asi que 'man git checkout' o
+            # 'echo git checkout main' se denegaban igual que el comando real.
+            #
+            # Nota de alcance: esto cubre al agente honesto, no a un evasor.
+            # 'sh -c "git checkout main"' o 'xargs git checkout' pasan, igual
+            # que en 1.7.0 -- el hook ve una cadena, no ejecuta un shell. Cubrir
+            # eso a medias solo daria sensacion falsa de red.
+            k = 0
+            while k < len(toks):
+                if ASSIGN_RE.match(toks[k]):
+                    k += 1                  # FOO=bar git ...
+                elif toks[k] in ("sudo", "command", "nohup", "time", "env"):
+                    k += 1                  # 'env LANG=C git ...' -> tras 'env'
+                    continue                #   siguen asignaciones, ya cubiertas
+                else:
+                    break
+            if k >= len(toks) or toks[k] != "git":
                 continue
+            gi = k
             j = gi + 1
             seg_dir = None
             while j < len(toks) and toks[j].startswith("-"):
@@ -127,8 +173,11 @@ def main():
             elif verb in ("checkout", "switch", "restore"):
                 # Reescriben el arbol de trabajo en disco. Prefijo "tree:" para no
                 # mezclarlos con los verbos de integracion de las reglas 1-3.
-                verbs.add("tree:" + verb)
-                tree_hits.append(seg_dir)
+                # Las formas que no tocan disco (crear rama, restore --staged)
+                # quedan fuera: ver touches_worktree().
+                if touches_worktree(verb, toks[j + 1:]):
+                    verbs.add("tree:" + verb)
+                    tree_hits.append(seg_dir)
             elif verb == "reset":
                 # --hard, --merge y --keep reescriben archivos del arbol de trabajo;
                 # --soft y --mixed solo tocan HEAD/indice, nunca los archivos.
@@ -149,9 +198,14 @@ def main():
                 # vigila con la fuerza presente. Las banderas cortas se agrupan
                 # ('-fd', '-fdx', '-xdf'), de ahi que se busque la letra 'f' dentro
                 # de cualquier grupo corto y no el token exacto '-f'.
+                # Todo lo que sigue a '--' son rutas, no banderas: sin este corte
+                # 'git clean -- -foo' leia el fichero '-foo' como '-f'.
+                flags = toks[j + 1:]
+                if "--" in flags:
+                    flags = flags[:flags.index("--")]
                 forced = any(
                     t == "--force" or (t.startswith("-") and not t.startswith("--") and "f" in t)
-                    for t in toks[j + 1:]
+                    for t in flags
                 )
                 if forced:
                     verbs.add("tree:clean")

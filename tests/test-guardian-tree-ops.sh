@@ -30,6 +30,12 @@ write_peer_lock() {
     "$1/.git/slate-sessions/$2.lock" "$3"
 }
 
+# NOTA (1.8.0): el tree-op canonico de este fichero paso de
+# 'git checkout -b X' a 'git checkout X'. Crear una rama sin punto de
+# partida no reescribe el arbol de trabajo y desde 1.8.0 se permite; lo
+# que aqui se prueba es la RESOLUCION DE CARPETAS, no el verbo.
+# La cobertura de verbos vive en test-guardian-false-positives.sh.
+
 age_lock() {
   # $1=ruta del lock  $2=segundos de antiguedad
   python3 -c "import os,sys,time; p=sys.argv[1]; t=time.time()-float(sys.argv[2]); os.utime(p,(t,t))" "$1" "$2"
@@ -53,7 +59,7 @@ is_warn() { echo "$1" | grep -q '"additionalContext"'; }
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: checkout con peer fresco en la misma carpeta no fue denegado: $OUT"; exit 1; }
 echo "PASS: checkout denegado con peer vivo en la misma carpeta"
 rm -rf "$REPO"
@@ -85,7 +91,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 OTHER=$(mktemp -d)
 write_peer_lock "$REPO" "peer" "$(cd "$OTHER" && pwd -P)"
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: peer en otra carpeta no debe bloquear: $OUT"; exit 1; }
 echo "PASS: peer en carpeta distinta no interfiere"
 rm -rf "$REPO" "$OTHER"
@@ -93,7 +99,7 @@ rm -rf "$REPO" "$OTHER"
 # --- 5. sesion sola -> nunca se bloquea ---
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 [ -z "$OUT" ] || { echo "FAIL: sesion sola produjo output: $OUT"; exit 1; }
 echo "PASS: una sesion sola nunca se bloquea"
 rm -rf "$REPO"
@@ -103,7 +109,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer.lock" 600
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: peer tibio (600s) no debe denegar: $OUT"; exit 1; }
 is_warn "$OUT" || { echo "FAIL: peer tibio (600s) debe avisar: $OUT"; exit 1; }
 echo "PASS: peer tibio avisa sin bloquear"
@@ -114,7 +120,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer.lock" 1200
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 [ -z "$OUT" ] || { echo "FAIL: peer rancio (1200s) debe ignorarse: $OUT"; exit 1; }
 echo "PASS: peer rancio se ignora"
 rm -rf "$REPO"
@@ -125,7 +131,7 @@ REAL=$(cd "$REPO" && pwd -P)
 mkdir -p "$REPO/.git/slate-sessions"
 echo '{"branch": "main", "worktree": "", "started_at": "2026-01-01T00:00:00Z"}' \
   > "$REPO/.git/slate-sessions/legacy.lock"
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: un lock sin cwd no debe denegar: $OUT"; exit 1; }
 echo "PASS: lock legado sin cwd se ignora sin romper"
 rm -rf "$REPO"
@@ -143,7 +149,7 @@ write_peer_lock "$REPO" "peer-z" "$REAL"
 write_peer_lock "$REPO" "peer-a" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer-z.lock" 600
 age_lock "$REPO/.git/slate-sessions/peer-a.lock" 10
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: (peer-z tibio 600s, peer-a fresco 10s) debe denegar sin importar el orden de archivos: $OUT"; exit 1; }
 rm -rf "$REPO"
 
@@ -153,7 +159,7 @@ write_peer_lock "$REPO" "peer-z" "$REAL"
 write_peer_lock "$REPO" "peer-a" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer-z.lock" 10
 age_lock "$REPO/.git/slate-sessions/peer-a.lock" 600
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: (peer-z fresco 10s, peer-a tibio 600s) debe denegar sin importar el orden de archivos: $OUT"; exit 1; }
 echo "PASS: el peer mas fresco decide el veredicto bajo las dos asignaciones de edad posibles (no depende del orden de archivos de ningun filesystem)"
 rm -rf "$REPO"
@@ -163,7 +169,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock_rawcwd "$REPO" "peer" "12345"
 ERRFILE=$(mktemp)
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK" 2>"$ERRFILE")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK" 2>"$ERRFILE")
 is_deny "$OUT" && { echo "FAIL: un cwd no-string no debe denegar: $OUT"; rm -f "$ERRFILE"; exit 1; }
 [ -s "$ERRFILE" ] && { echo "FAIL: un cwd no-string no debe lanzar una excepcion (stderr no vacio): $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
 rm -f "$ERRFILE"
@@ -175,7 +181,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 OTHER=$(mktemp -d)
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git -C $OTHER checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git -C $OTHER checkout otra" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: un checkout con -C hacia OTRO repo no debe denegarse aunque haya un peer vivo en mi carpeta: $OUT"; exit 1; }
 echo "PASS: 'git -C <otro-repo> checkout' no interfiere con un peer de esta carpeta"
 rm -rf "$REPO" "$OTHER"
@@ -202,7 +208,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 mkdir -p "$REPO/sub"
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git -C sub checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git -C sub checkout otra" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: 'git -C sub checkout' con un peer vivo en la RAIZ de este mismo repo no fue denegado: $OUT"; exit 1; }
 echo "PASS: 'git -C <subcarpeta-de-este-repo> checkout' denegado con un peer en la raiz"
 rm -rf "$REPO"
@@ -218,7 +224,7 @@ REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 OTHER=$(setup_repo)
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git -C $OTHER checkout -b x && git checkout -b y" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git -C $OTHER checkout x && git checkout y" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: el segundo tree-op (local, sin -C) no fue denegado aunque el primero apuntara a otro repo: $OUT"; exit 1; }
 echo "PASS: un tree-op local en un comando compuesto se denega aunque otro tree-op del mismo comando apunte a otro repo"
 rm -rf "$REPO" "$OTHER"
@@ -239,13 +245,13 @@ WT=$(cd "$REAL/wt" && pwd -P)
 
 # 15a. sesion en la RAIZ, peer en el worktree enlazado anidado -> no interfiere
 write_peer_lock "$REPO" "peer" "$WT"
-OUT=$(payload "yo" "$REAL" "git checkout -b brandnew" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout brandnew" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: un peer en un worktree enlazado ANIDADO no debe bloquear un checkout en la raiz: $OUT"; exit 1; }
 rm -f "$REPO/.git/slate-sessions/peer.lock"
 
 # 15b. sesion en el worktree enlazado anidado, peer en la RAIZ -> tampoco interfiere
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$WT" "git checkout -b otramas" | bash "$HOOK")
+OUT=$(payload "yo" "$WT" "git checkout otramas" | bash "$HOOK")
 is_deny "$OUT" && { echo "FAIL: un peer en la RAIZ no debe bloquear un checkout en un worktree enlazado ANIDADO: $OUT"; exit 1; }
 echo "PASS: un peer en un worktree enlazado anidado no interfiere en ninguna direccion"
 rm -rf "$REPO"
@@ -261,7 +267,7 @@ REAL=$(cd "$REPO" && pwd -P)
 LOCKP="$REPO/.git/slate-sessions/peer.lock"
 for VARIANT in vacio truncado null lista texto; do
   write_peer_lock "$REPO" "peer" "$REAL"
-  OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+  OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
   is_deny "$OUT" || { echo "FAIL: control positivo (lock intacto) no denego antes de la variante '$VARIANT': $OUT"; exit 1; }
 
   case "$VARIANT" in
@@ -273,7 +279,7 @@ for VARIANT in vacio truncado null lista texto; do
   esac
 
   ERRFILE=$(mktemp)
-  OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK" 2>"$ERRFILE")
+  OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK" 2>"$ERRFILE")
   is_deny "$OUT" && { echo "FAIL: un lock de peer '$VARIANT' no debe denegar (nunca se deniega por falta de datos): $OUT"; rm -f "$ERRFILE"; exit 1; }
   [ -s "$ERRFILE" ] && { echo "FAIL: un lock de peer '$VARIANT' no debe lanzar excepcion (stderr no vacio): $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
   rm -f "$ERRFILE"
@@ -286,11 +292,11 @@ rm -rf "$REPO"
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
-OUT=$(payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK")
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 is_deny "$OUT" || { echo "FAIL: control positivo (cwd absoluto) no denego: $OUT"; exit 1; }
 write_peer_lock "$REPO" "peer" "."
 ERRFILE=$(mktemp)
-OUT=$(cd "$REAL" && payload "yo" "$REAL" "git checkout -b otra" | bash "$HOOK" 2>"$ERRFILE")
+OUT=$(cd "$REAL" && payload "yo" "$REAL" "git checkout otra" | bash "$HOOK" 2>"$ERRFILE")
 is_deny "$OUT" && { echo "FAIL: un cwd de peer relativo ('.') no debe denegar: $OUT"; rm -f "$ERRFILE"; exit 1; }
 [ -s "$ERRFILE" ] && { echo "FAIL: un cwd de peer relativo no debe lanzar excepcion: $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
 rm -f "$ERRFILE"
