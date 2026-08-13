@@ -1,5 +1,133 @@
 # Changelog
 
+## 1.9.0 — 2026-08-13
+
+Seis arreglos aprobados tras diagnosticar un incidente real (el guardián
+guardó silencio durante una colisión de dos sesiones en ramas distintas). Una
+segunda auditoría en paralelo, hecha sobre el plan antes de tocar código,
+encontró 5 huecos concretos en cómo estaban especificados esos arreglos — ya
+están incorporados abajo, no quedaron como una segunda pasada.
+
+### Corregido — el guardián se quedaba callado ante la colisión real que lo motivó
+
+Dos huecos independientes dejaban pasar exactamente el escenario del
+incidente: dos sesiones en ramas distintas de la misma carpeta, una de ellas
+sin llamar a ninguna herramienta por un rato.
+
+1. **Banda tibia (5–15 min) eliminada.** `FRESH` (300s) hacía que un candado
+   ajeno de 300–900s de antigüedad solo generara aviso, nunca bloqueo.
+   `FRESH` pasa a valer lo mismo que `TTL` (900s): cualquier candado dentro
+   del TTL deniega igual que uno recién creado.
+2. **El candado de una sesión viva podía borrarse y no recrearse nunca.**
+   `session-lock.sh` y `session-lock-cleanup.sh` borran candados de más de 15
+   minutos (`find … -mmin +15 -delete`) para no acumular basura de sesiones
+   muertas — pero una sesión VIVA que simplemente no llamó a ninguna
+   herramienta en ese rato perdía su candado por el mismo mecanismo, y
+   `session-heartbeat.sh` no lo recreaba (`if not isfile(lock): exit 0`),
+   solo refrescaba uno que ya existiera. Esa sesión quedaba invisible para el
+   guardián para siempre — sin este segundo arreglo, subir el umbral del (1)
+   no habría cerrado nada, solo habría movido el mismo hueco. El heartbeat
+   ahora recrea el candado si lo encuentra ausente.
+3. El mensaje de denegación incluye ahora la ruta del archivo de candado, para
+   poder borrar a mano uno fantasma (de una sesión que se cayó sin cerrar
+   limpio) si hace falta desbloquear antes de que expire el TTL.
+
+### Cambiado — current.md ya no se inyecta completo al arrancar
+
+`session-start.sh` hacía un `cat` íntegro de `docs/slate/progress/current.md`
+en cada arranque. Medido en un proyecto real: 31.6 KB, ~9000 tokens, en cada
+mensaje de inicio de sesión. Ahora se inyectan solo las últimas ~100 líneas,
+con una nota (`truncado — abre docs/slate/progress/current.md si necesitas
+el resto`) cuando se recorta. Un archivo de 100 líneas o menos se inyecta
+igual que antes, sin nota.
+
+### Agregado — merge=union para history.md
+
+`history.md` es de solo-anexado, pero dos sesiones en ramas distintas
+anexando al mismo tiempo generaban un conflicto de fusión en cada `git
+merge` (17 conflictos medidos). `docs/slate/progress/.gitattributes` ahora
+marca `history.md merge=union`, así que git combina los anexados de ambas
+ramas en vez de pedir resolución manual.
+
+Se entrega por dos vías, no solo una: `install-into-project.sh` para
+instalaciones nuevas, y `session-start.sh` (corre en cada sesión) para
+proyectos ya instalados. Solo el instalador habría dejado sin cubrir a
+cualquier proyecto que instaló slate antes de este cambio — corre una única
+vez y nunca pisa un `.gitattributes` que el proyecto ya tenga, así que jamás
+vuelve a alcanzarlo (la misma clase de bug que dejó `codebase-map.md`
+regenerándose de más en proyectos ya instalados, ver 1.8.0 más abajo).
+Ninguna de las dos vías reemplaza un `.gitattributes` propio: si ya existe
+uno, solo se le añade la línea si falta.
+
+### Agregado — versión activa visible al arrancar
+
+`session-start.sh` inyecta ahora `slate X.Y.Z` (leído de
+`.claude-plugin/plugin.json`) como línea visible, para que una instalación
+con caché vieja (hooks o skills editados pero la versión del plugin sin
+subir, con lo que Claude Code sigue sirviendo la versión anterior) sea obvia
+en vez de silenciosa. Si el archivo no se puede leer, la línea se omite sin
+romper el arranque de la sesión.
+
+### Agregado — contador de history.md visible al superar el límite
+
+`docs/archiving.md` fija el límite de rotación en 40 entradas. `session-start.sh`
+ahora cuenta los bloques reales de `history.md` — reutilizando el mismo
+filtro que `history_tail()` ya usaba para descartar ruido de hooks (ecos de
+`init.sh`, cabeceras de `PreCompact`), no un conteo crudo de líneas que
+empiezan con `##` — y muestra `history.md: N/40 bloques — rota con
+tracking-progress` solo cuando N supera 40. Contar esas líneas en crudo
+habría inflado el número: medido en este mismo repo, 53 líneas que empiezan
+con `##` de las cuales solo 27 son bloques reales.
+
+### Agregado — reserva de IDs en .git para FEAT-XXX/BUG-XXX
+
+`managing-feature-list`, `breaking-down-features` y `tracking-bugs`
+calculaban el próximo ID con un `grep` del máximo en los archivos vivos + 1.
+Dos sesiones en ramas sin fusionar podían ver el mismo máximo y elegir el
+mismo ID sin que ninguna se enterara hasta el merge.
+
+`scripts/reserve-id.sh` reserva un ID candidato de forma atómica creando
+`$(git rev-parse --git-common-dir)/slate-ids/<PREFIJO>/<NUMERO>` — `mkdir`
+falla si el directorio ya existe, lo que da atomicidad sin lockfile aparte.
+Las reservas van separadas por prefijo (`slate-ids/FEAT/`, `slate-ids/BUG/`)
+para que `FEAT-042` y `BUG-042` nunca colisionen entre sí, ya que
+`tracking-bugs` declara esas dos numeraciones independientes. Las tres
+skills ahora calculan el candidato como el máximo ENTRE los archivos vivos Y
+las reservas pendientes (no solo los archivos — mirar solo los archivos
+dejaría pasar exactamente la colisión que esto debía evitar) y llaman al
+script antes de dar el número por definitivo; si la reserva falla, prueban
+el siguiente. `breaking-down-features` puede crear hasta 3 features de una
+vez: reserva una vez POR feature, no una sola vez para el lote completo.
+
+Límite conocido: es una protección por repositorio y por máquina
+(`git rev-parse --git-common-dir` es compartido entre ramas y worktrees del
+MISMO repo, incluido). No protege entre clones distintos que nunca comparten
+un `.git`.
+
+`.git/slate-ids/` es la única excepción documentada a "Markdown es el
+contrato" (`skills/using-slate/SKILL.md`): son directorios marcador vacíos,
+de uso interno, invisibles y no versionados — nunca un documento de
+producto.
+
+### Tests
+
+23 → 29 archivos en `tests/test-*.sh`, todos en verde. Nuevos: reserva de
+IDs (incluye reserva hecha desde un worktree enlazado bloqueando el mismo ID
+en el worktree principal), recreación de candado por el heartbeat (incluye
+verificar que la sesión recreada vuelve a ser visible para
+`session-guardian.sh`), truncado de `current.md`, versión + contador de
+`history.md` (con guarda explícita contra el conteo inflado por ruido de
+hooks), entrega de `.gitattributes` tanto por el instalador como por
+`session-start.sh`. Ajustados: los tests de `session-guardian` que
+verificaban la banda tibia (300–900s) ahora verifican que esa banda ya no
+existe.
+
+No verificado en un escenario real de dos sesiones de Claude Code corriendo
+en paralelo de verdad (dos procesos distintos, dos ramas, con tiempo real
+transcurriendo): toda la cobertura de arriba usa repos temporales y payloads
+simulados dentro de la misma sesión de tests, no dos agentes reales
+compitiendo por el mismo repo.
+
 ## 1.8.0 — 2026-07-26
 
 **Auditoría de uso real (FEAT-006).** Se midió el plugin contra un proyecto que

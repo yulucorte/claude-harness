@@ -37,18 +37,37 @@ Every feature MUST pass through `in-progress.md` so SessionStart can recover con
 ## ID assignment
 
 Do NOT read the files whole — that is the expensive mistake. Get the highest
-`FEAT-NNN` with a bounded search over the live files and add 1:
+`FEAT-NNN` with a bounded search over the live files AND the pending
+reservations other branches may already hold (a session on an unmerged
+branch can have claimed a higher number that appears in no file yet):
 
     grep -hoE 'FEAT-[0-9]+' docs/slate/features/backlog.md docs/slate/features/in-progress.md docs/slate/features/done.md 2>/dev/null \
       | grep -oE '[0-9]+' | sort -n | tail -1
+    ls "$(git rev-parse --git-common-dir)/slate-ids/FEAT" 2>/dev/null | sort -n | tail -1
 
-Next ID = that number + 1, zero-padded to 3 digits (e.g. `FEAT-043`). Empty
-output (no features yet) → `FEAT-001`. Subtasks: `FEAT-XXX.M` where `M` is the
-next integer within the feature. IDs are immutable.
+Candidate ID = the HIGHER of those two numbers + 1, zero-padded to 3 digits
+(e.g. `FEAT-043`). Empty output from both → `FEAT-001`.
 
-The search reads only the live files, never the `done-archive-*.md` files:
+**Reserve it before writing it anywhere**: `$CLAUDE_PLUGIN_ROOT/scripts/reserve-id.sh FEAT-043`.
+Exit 0 → the ID is yours, use it. Non-zero exit → another branch/session
+reserved it first; retry with the next candidate (`FEAT-044`, ...) and
+reserve THAT, until a reservation succeeds. This is what closes the race a
+plain `grep`+1 can't: two sessions on different unmerged branches computing
+the same "max + 1" and both picking it, invisibly to each other until they
+merge.
+
+Subtasks: `FEAT-XXX.M` where `M` is the next integer within the feature.
+Subtasks are NOT reserved — they live inside an already-reserved feature, so
+there's no cross-branch race to protect. IDs are immutable.
+
+The file search reads only the live files, never the `done-archive-*.md` files:
 archiving moves only the oldest (lowest-numbered) entries, so the highest number
 always stays live. See `docs/archiving.md`.
+
+The reservation directory (`scripts/reserve-id.sh`) is a per-repo, per-machine
+safety net: it's shared via `git rev-parse --git-common-dir`, so every branch
+and worktree of the SAME repo sees it, but it does NOT protect across
+separate clones or machines that never share a `.git`.
 
 ## Archiving done.md
 

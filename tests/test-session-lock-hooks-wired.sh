@@ -110,7 +110,9 @@ assert lttl, 'session-lock.sh no define TTL_SECONDS'
 assert gttl.group(1) == lttl.group(1), 'TTL desincronizado: guardian %s vs lock %s' % (gttl.group(1), lttl.group(1))
 gfresh = re.search(r'^\s*FRESH\s*=\s*(\d+)', gsrc, re.M)
 assert gfresh, 'session-guardian.sh no define FRESH'
-assert int(gfresh.group(1)) < int(gttl.group(1)), 'FRESH debe ser menor que TTL'
+# 1.9.0: FRESH se igualo al TTL a proposito (elimina la banda tibia de
+# deny->warn de 300-900s). El invariante ya no es FRESH < TTL, es FRESH == TTL.
+assert int(gfresh.group(1)) == int(gttl.group(1)), 'FRESH debe ser igual al TTL (banda tibia eliminada en 1.9.0)'
 print('TTL:', gttl.group(1), 'FRESH:', gfresh.group(1))
 "
 echo "PASS: la lista de herramientas de escritura coincide en guardian, heartbeat y hooks.json; TTL/FRESH coherentes"

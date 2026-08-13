@@ -59,6 +59,26 @@ if [ ! -d "$STATE/progress" ] || [ ! -d "$STATE/features" ]; then
   exit 0
 fi
 
+# Ensure docs/slate/progress/.gitattributes marks history.md as merge=union,
+# so concurrent append-only writes from different branches stop producing a
+# conflict marker every time two sessions both appended a session block.
+#
+# Delivered HERE, not just by install-into-project.sh: the installer only
+# runs once at install time and never overwrites a .gitattributes the user
+# already has there (copy-if-missing) — almost any mature repo already has
+# one, so an already-installed project would never receive this line through
+# the installer alone. Same class of bug as codebase-map.md regenerating in
+# already-installed projects (see CHANGELOG 1.8.0). session-start.sh runs on
+# every session, so it reaches those projects too. Idempotent: only appends
+# the line when missing, never replaces a user's own file.
+GITATTRIBUTES="$STATE/progress/.gitattributes"
+UNION_LINE="history.md merge=union"
+if [ ! -e "$GITATTRIBUTES" ]; then
+  printf '%s\n' "$UNION_LINE" > "$GITATTRIBUTES" 2>/dev/null || true
+elif ! grep -qxF "$UNION_LINE" "$GITATTRIBUTES" 2>/dev/null; then
+  printf '\n%s\n' "$UNION_LINE" >> "$GITATTRIBUTES" 2>/dev/null || true
+fi
+
 # Run init.sh if present. Its output is DISCARDED on success and only surfaces
 # on stderr when init.sh fails.
 #
@@ -107,19 +127,53 @@ if [ -f "$STATE/ideas/inbox.md" ]; then
     && IDEAS_LINE="## Ideas acumuladas: ${IDEA_COUNT} (buzón grande; /ideas-triage cuando convenga)"
 fi
 
-# Last N lines of history.md that carry actual work.
+# history.md with the hook exhaust (init.sh output, PreCompact stubs, empty
+# session-end blocks) stripped out. Shared by history_tail() (last N lines)
+# and the block-count check below (must agree on what counts as a real
+# entry, or the count and the tail it's measuring drift apart).
 #
 # Projects that ran slate < 1.8.0 have history files where most lines are hook
 # exhaust: init.sh output, PreCompact stubs, and empty session-end blocks that
 # only copied the current.md template. Filtering here fixes those files without
 # rewriting them — nothing is deleted, it just stops being injected.
-history_tail() {
-  local n="$1"
+history_clean() {
   [ -f "$STATE/progress/history.md" ] || return 0
   grep -v '^[[:space:]]*$' "$STATE/progress/history.md" 2>/dev/null \
     | grep -vE '^\[init\.sh\]|^## .* — SessionStart init\.sh$|^## .* — PreCompact triggered|^# Current work$|^_\(none in flight\)_$|^[[:space:]]*<!-- This file is auto-managed by slate|^[[:space:]]*(Entries here represent IN-FLIGHT|At session end, completed entries|orphaned entries become CARRY-OVER)|^[[:space:]]*-->[[:space:]]*$' \
-    | tail -n "$n" || true
+    || true
 }
+
+history_tail() {
+  history_clean | tail -n "$1"
+}
+
+# Active plugin version, so a stale-cache install (hooks/skills edited but the
+# plugin.json version never bumped, so Claude Code keeps serving the cached
+# old version) is visible instead of silent. Never blocks startup: any failure
+# to read it just skips the line.
+VERSION_LINE=""
+if [ -f "$PLUGIN_ROOT/.claude-plugin/plugin.json" ]; then
+  SLATE_VERSION=$(python3 -c "import json,sys
+try:
+    v = json.load(open(sys.argv[1])).get('version')
+    print(v if isinstance(v, str) and v else '')
+except Exception:
+    print('')" "$PLUGIN_ROOT/.claude-plugin/plugin.json" 2>/dev/null || true)
+  [ -n "$SLATE_VERSION" ] && VERSION_LINE="slate ${SLATE_VERSION}"
+fi
+
+# history.md rotation warning. docs/archiving.md sets the limit at 40 entries;
+# an entry is one '## YYYY-MM-DD — <summary>' session block, counted the same
+# way history_tail() decides what is real (raw '## ' counts hook exhaust as
+# entries too — measured on this repo: 53 raw vs 27 real). Silent when under
+# the limit, so the common case stays quiet.
+HISTORY_COUNT_LINE=""
+if [ -f "$STATE/progress/history.md" ]; then
+  HIST_LIMIT=40
+  HIST_COUNT=$(history_clean | grep -c '^## ' || true)
+  [ "${HIST_COUNT:-0}" -gt "$HIST_LIMIT" ] 2>/dev/null \
+    && HISTORY_COUNT_LINE="history.md: ${HIST_COUNT}/${HIST_LIMIT} bloques — rota con tracking-progress"
+fi
 
 case "$SOURCE" in
   compact|resume)
@@ -134,11 +188,24 @@ $(history_tail 1)"
 ${BUGS_LINE}"
     [ -n "$IDEAS_LINE" ] && CONTEXT="${CONTEXT}
 ${IDEAS_LINE}"
+    [ -n "$HISTORY_COUNT_LINE" ] && CONTEXT="${CONTEXT}
+${HISTORY_COUNT_LINE}"
+    [ -n "$VERSION_LINE" ] && CONTEXT="${CONTEXT}
+${VERSION_LINE}"
     ;;
   *)  # startup | clear (and any unknown source, treated as a cold start)
+    # current.md is injected in full unless it exceeds ~100 lines. Measured on
+    # a live project: an unbounded current.md reached 31.6 KB (~9000 tokens)
+    # of dead weight in every single startup message.
     CURRENT_WORK=""
     if [ -f "$STATE/progress/current.md" ]; then
-      CURRENT_WORK=$(cat "$STATE/progress/current.md" 2>/dev/null || true)
+      CUR_LINES=$(wc -l < "$STATE/progress/current.md" 2>/dev/null | tr -d ' ')
+      if [ "${CUR_LINES:-0}" -gt 100 ] 2>/dev/null; then
+        CURRENT_WORK="(truncado — abre docs/slate/progress/current.md si necesitas el resto)
+$(tail -n 100 "$STATE/progress/current.md" 2>/dev/null || true)"
+      else
+        CURRENT_WORK=$(cat "$STATE/progress/current.md" 2>/dev/null || true)
+      fi
     fi
     CONTEXT="Slate activo — estado abajo. Protocolo completo en la skill using-slate si lo necesitas.
 
@@ -154,6 +221,10 @@ $(history_tail 2)"
 ${BUGS_LINE}"
     [ -n "$IDEAS_LINE" ] && CONTEXT="${CONTEXT}
 ${IDEAS_LINE}"
+    [ -n "$HISTORY_COUNT_LINE" ] && CONTEXT="${CONTEXT}
+${HISTORY_COUNT_LINE}"
+    [ -n "$VERSION_LINE" ] && CONTEXT="${CONTEXT}
+${VERSION_LINE}"
     ;;
 esac
 

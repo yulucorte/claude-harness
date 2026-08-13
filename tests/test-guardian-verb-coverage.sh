@@ -155,26 +155,26 @@ check "$REAL" "git stash list"      quiet
 rm -rf "$REPO" "$OTHER"
 
 # =====================================================================
-# Bloque D — peer TIBIO (>300s, <900s) en la misma carpeta: avisa, no bloquea
+# Bloque D — peer envejecido pero dentro del TTL (900s) en la misma carpeta:
+# desde 1.9.0 FRESH == TTL, asi que ya no hay banda tibia -- deniega igual
+# que un peer recien creado (bloque A).
 # =====================================================================
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer.lock" 600
-echo "Bloque D: peer tibio (600s) en la misma carpeta"
-check "$REAL" "git checkout main"  warn
-check "$REAL" "git pull"           warn
-check "$REAL" "git clean -fd"      warn
-check "$REAL" "git stash"          warn
-# La banda tibia NO puede rebajar una denegacion de la regla 3. El stash es del
-# repo entero: un 'pop'/'apply' sin referencia explicita puede sacar el cajon de
-# la otra sesion tenga la antiguedad que tenga su candado, asi que el peer tibio
-# COMPARTIENDO carpeta no puede acabar mas permisivo que uno en otra carpeta
-# (bloque C), que si deniega. Y el motivo tiene que ser el del stash compartido:
-# un mensaje sobre reescritura del arbol no le dice al agente que existe la
-# forma segura 'git stash pop stash@{n}'.
-check "$REAL" "git stash pop"      deny  "compartido por todo el repo"
-check "$REAL" "git stash apply"    deny  "compartido por todo el repo"
+echo "Bloque D: peer con 600s de antiguedad (dentro del TTL) en la misma carpeta"
+check "$REAL" "git checkout main"  deny
+check "$REAL" "git pull"           deny
+check "$REAL" "git clean -fd"      deny
+check "$REAL" "git stash"          deny
+# pop/apply (sin ref explicita) son formas DESTRUCTIVAS del stash, asi que
+# tambien cuentan como tree-op: la regla 0 ya deniega por reescritura del
+# arbol y la regla 3 se calla para no duplicar el mensaje (mismo trato que
+# el bloque A con un peer fresco). drop/clear NO son tree-op -- los deniega
+# solo la regla 3, con su motivo propio de "cajon compartido".
+check "$REAL" "git stash pop"      deny
+check "$REAL" "git stash apply"    deny
 check "$REAL" "git stash drop"     deny  "cajon compartido"
 check "$REAL" "git stash clear"    deny  "cajon compartido"
 # Y la banda tibia tampoco endurece lo que nunca se vigilo

@@ -28,6 +28,23 @@ _copy_if_missing() {
   fi
 }
 
+# Like _copy_if_missing, but for a file the user may already own (.gitattributes):
+# never overwrite it. If it exists, add the template's line only when it is not
+# already present; if it doesn't exist yet, copy the template as-is.
+_ensure_line_present() {
+  local src="$1" dst="$2" line
+  line=$(cat "$src")
+  if [ ! -e "$dst" ]; then
+    cp "$src" "$dst"
+    echo "  + $dst"
+  elif grep -qxF "$line" "$dst" 2>/dev/null; then
+    echo "  = $dst (kept, línea ya presente)"
+  else
+    printf '\n%s\n' "$line" >> "$dst"
+    echo "  + $dst (línea añadida)"
+  fi
+}
+
 echo "Installing slate templates into $TARGET..."
 
 _copy_if_missing "$PLUGIN_ROOT/templates/AGENTS.md"             "AGENTS.md"
@@ -35,6 +52,7 @@ _copy_if_missing "$PLUGIN_ROOT/templates/init.sh"               "init.sh"
 chmod +x init.sh 2>/dev/null || true
 
 _copy_if_missing "$PLUGIN_ROOT/templates/progress/.gitignore"   "docs/slate/progress/.gitignore"
+_ensure_line_present "$PLUGIN_ROOT/templates/progress/.gitattributes" "docs/slate/progress/.gitattributes"
 _copy_if_missing "$PLUGIN_ROOT/templates/progress/current.md"   "docs/slate/progress/current.md"
 _copy_if_missing "$PLUGIN_ROOT/templates/progress/history.md"   "docs/slate/progress/history.md"
 

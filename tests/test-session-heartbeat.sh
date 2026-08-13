@@ -23,10 +23,16 @@ NEW_MTIME=$(stat -f %m "$LOCK" 2>/dev/null || stat -c %Y "$LOCK")
 [ "$NEW_MTIME" -gt "$OLD_MTIME" ] || { echo "FAIL: lock mtime not refreshed ($OLD_MTIME -> $NEW_MTIME)"; exit 1; }
 echo "PASS: heartbeat refreshes lock mtime for an existing lock"
 
-# --- Test: no lock file for this session -> no error, no file created ---
-echo '{"session_id":"sess-none"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK"
-[ -f "$REPO/.git/slate-sessions/sess-none.lock" ] && { echo "FAIL: heartbeat created a lock file it shouldn't have"; exit 1; }
-echo "PASS: heartbeat is a no-op when this session has no lock"
+# --- Test: no lock file for this session -> heartbeat RECREATES it (1.9.0) ---
+# Before 1.9.0 this was a deliberate no-op. Changed because session-lock.sh /
+# session-lock-cleanup.sh reap locks older than 15min (find -mmin +15
+# -delete), which can delete the lock of a session that is genuinely alive
+# but idle for >15min; if the heartbeat doesn't recreate it, that session
+# stays invisible to session-guardian.sh forever. Full coverage of this case
+# lives in test-session-heartbeat-recreates-lock.sh.
+echo '{"session_id":"sess-none","cwd":"'"$REPO"'"}' | CLAUDE_PROJECT_ROOT="$REPO" bash "$HOOK"
+[ -f "$REPO/.git/slate-sessions/sess-none.lock" ] || { echo "FAIL: heartbeat did not recreate a missing lock"; exit 1; }
+echo "PASS: heartbeat recreates a missing lock for this session (no longer a no-op)"
 
 # --- Test: heartbeat mirrors current branch + head into the lock ---
 git -C "$REPO" checkout -qb mirror-branch

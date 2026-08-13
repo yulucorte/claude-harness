@@ -117,3 +117,50 @@ Límites conocidos, declarados en `CHANGELOG.md` y en la spec: el clasificador l
 - [x] FEAT-006.13: +41 aserciones en dos ficheros de test nuevos
 - [x] FEAT-006.14: `has_work()` deja de descartar encabezados `###` (formato de `tracking-progress`) y un `<!--` sin cerrar ya no traga el trabajo posterior
 - [x] FEAT-006.15: envoltorios `env`/`sudo` cubiertos en el parser; alcance del guardian documentado en el código
+
+## FEAT-007: El guardián no recreaba el candado borrado — arreglo real del incidente + higiene tras auditoría de phlou-app
+- **Status**: done
+- **Created**: 2026-08-13
+- **Updated**: 2026-08-13
+- **Verified**: 2026-08-13
+- **Spec**: none
+- **Plan**: none (auditoría dirigida sobre un reporte externo, no un plan previo)
+- **Branch**: feat/feat-007-guardian-heartbeat-and-hygiene
+- **Goal**: cerrar los fallos que un reporte de auditoría externo (phlou-app, "El backlog miente", 2026-08-13) encontró en el plugin, incluido un incidente en vivo donde el guardián no bloqueó una operación destructiva de otra sesión sobre trabajo ajeno sin commitear
+- **Verification**: `for f in tests/*.sh; do bash "$f"; done` — 29 ficheros, 29/29 en verde (23→29; verificado de forma independiente, no solo por el agente que implementó)
+- **Tags**: guardian, heartbeat, hooks, higiene, ids
+
+### Subtasks
+- [x] FEAT-007.1: Guardián — `FRESH` 300s→900s, elimina la banda tibia donde un candado ajeno de 5-15 min solo avisaba en vez de bloquear
+- [x] FEAT-007.2: Heartbeat recrea el candado propio si una sesión peer lo borró por antigüedad (`find -mmin +15 -delete`) mientras la sesión seguía viva — el hueco real detrás del incidente; sin esto el punto .1 no cerraba nada
+- [x] FEAT-007.3: Mensaje de deny del guardián incluye la ruta del candado, para poder borrar uno fantasma a mano
+- [x] FEAT-007.4: `session-start.sh` inyecta `current.md` truncado a las últimas ~100 líneas en vez de completo (medido: 31.6 KB / ~9000 tokens por arranque en un caso real)
+- [x] FEAT-007.5: `.gitattributes` con `history.md merge=union`, entregado tanto por el instalador (proyectos nuevos) como por el migrador de `session-start.sh` (alcanza proyectos ya instalados, que el instalador por sí solo nunca vuelve a tocar)
+- [x] FEAT-007.6: Versión activa del plugin (leída de `plugin.json`) visible en el contexto de `SessionStart`
+- [x] FEAT-007.7: Contador `history.md: N/40 bloques` visible al superar el límite, reutilizando el filtro de ruido de `history_tail()` en vez de contar líneas `## ` en crudo (que infla el número: medido en este mismo repo, 53 crudo vs. 27 real)
+- [x] FEAT-007.8: `scripts/reserve-id.sh` — reserva atómica de un ID candidato vía `mkdir` en `$(git rev-parse --git-common-dir)/slate-ids/<PREFIJO>/<NUM>`, separado por prefijo para que FEAT y BUG no colisionen entre sí
+- [x] FEAT-007.9: `managing-feature-list`, `breaking-down-features` y `tracking-bugs` calculan el candidato como máximo(archivos vivos, reservas pendientes)+1 y reservan antes de confirmar el ID (evita la colisión real medida: 5 casos en phlou-app, dos sesiones en ramas distintas viendo el mismo máximo)
+- [x] FEAT-007.10: `using-slate/SKILL.md` documenta la excepción — `.git/slate-ids/` es el único estado de Slate que no es markdown, es un marcador técnico interno no versionado
+- [x] FEAT-007.11: Suite de tests 23→29 ficheros, verificada en verde de forma independiente
+
+### Notes
+Disparado por una auditoría externa ("El backlog miente", Phlou, 2026-08-13) sobre
+un proyecto real (`phlou-app`) que usa este plugin. El diagnóstico y las
+propuestas los hizo un agente Opus contra el código real (no supuesto): descartó
+con evidencia la hipótesis inicial de "versión de plugin desactualizada en
+caché" — `phlou-app` corría la 1.8.0 exacta. Un segundo agente Opus, en paralelo
+y de solo lectura, auditó el plan antes de tocar código y encontró que el
+arreglo aprobado para el guardián (subir el umbral de 300s a 900s) no cerraba
+el modo de fallo real del incidente — encontró la causa exacta (el candado se
+borraba y el heartbeat no lo recreaba) y la sumó al lote antes de implementar.
+La ejecución (agente Sonnet, TDD) verificó al final con la suite completa; yo
+mismo la volví a correr de forma independiente antes de dar el trabajo por
+cerrado.
+
+Límite conocido: la reserva de IDs y el arreglo del candado son protecciones
+por-repositorio y por-máquina — no cubren colisiones entre clones en máquinas
+distintas ni en CI. Y subir la versión en `plugin.json` no actualiza sola una
+instalación ya existente: un proyecto que ya tiene Slate instalado necesita
+reinstalar/actualizar para recibir 1.9.0 (la misma clase de bug, documentada
+aquí, que dejó `codebase-map.md` regenerándose de más en proyectos ya
+instalados tras 1.8.0 — ver `templates/init.sh` vs. proyecto ya instalado).

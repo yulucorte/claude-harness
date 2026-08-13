@@ -66,12 +66,16 @@ paths "$LOCK" | grep -q "f1.txt" && { echo "FAIL: no se descarto la mas antigua"
 echo "PASS: la lista se acota a las 20 mas recientes"
 rm -rf "$REPO"
 
-# --- 5. sin lock propio no hace nada y no rompe ---
+# --- 5. sin lock propio (repo sin commits, HEAD sin nacer) -> se recrea sin
+# romper. Desde 1.9.0 el heartbeat ya no ignora un lock ausente (ver
+# test-session-heartbeat-recreates-lock.sh); esto solo confirma que un repo
+# recien inicializado, sin ningun commit, no revienta al recrearlo. ---
 REPO=$(mktemp -d)
 git -C "$REPO" init -q
 REAL=$(cd "$REPO" && pwd -P)
 beat "$REAL" "Write" "$REAL/x.txt"
-echo "PASS: sin lock propio termina limpio"
+[ -f "$REAL/.git/slate-sessions/sess-hb.lock" ] || { echo "FAIL: heartbeat no recreo el lock en un repo sin commits"; exit 1; }
+echo "PASS: repo sin commits (HEAD sin nacer) recrea el lock sin romper"
 rm -rf "$REPO"
 
 # --- 6/7/8: un payload malformado degrada en silencio, no revienta el parseo ---

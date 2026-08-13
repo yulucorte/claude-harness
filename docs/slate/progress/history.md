@@ -389,3 +389,53 @@ _(none in flight)_
      Entries here represent IN-FLIGHT work for the current session.
      At session end, completed entries are moved to history.md;
      orphaned entries become CARRY-OVER. -->
+
+## 2026-08-13 — Auditoría phlou-app: el guardián no recreaba el candado (FEAT-007)
+
+Felipe trajo un reporte de auditoría externo ("El backlog miente", phlou-app,
+2026-08-13) que atribuye 4 fallos + 1 incidente en vivo (una sesión le borró
+trabajo a otra) al plugin Slate. Instrucción: brainstorming y propuestas con
+subagentes Opus, ejecución con Sonnet, decisiones de alcance las toma Felipe.
+
+### 2026-08-13T12:20:00-05:00 — Dispatched general-purpose (opus)
+- **Task**: Diagnosticar contra el código real los 4 fallos + incidente en vivo del reporte de phlou-app
+- **Feature ref**: FEAT-007
+- **Plan ref**: none
+- **Status**: dispatched
+
+### 2026-08-13T12:34:05-05:00 — general-purpose (opus) returned
+- **Status**: DONE
+- **Report**: docs/slate/progress/subagents/feat-007-1-diagnose-plugin-failures-DONE.md
+- **Concerns**: ninguno bloqueante. Descartó con evidencia la hipótesis inicial de versión cacheada vieja; propuso 6 arreglos acotados + 4 decisiones de arquitectura para Felipe
+
+Presentados los hallazgos a Felipe en lenguaje claro. Felipe aprobó los 6 arreglos vía AskUserQuestion (paquete completo, incluida la excepción markdown-only de la reserva de IDs, y cobertura de EnterWorktree/ExitWorktree con aviso).
+
+### 2026-08-13T12:39:00-05:00 — Dispatched general-purpose (sonnet)
+- **Task**: Implementar los 6 arreglos aprobados, con TDD
+- **Feature ref**: FEAT-007
+- **Plan ref**: none
+- **Status**: dispatched
+
+Felipe pidió una segunda validación de coherencia antes de que la implementación cerrara.
+
+### 2026-08-13T12:39:30-05:00 — Dispatched general-purpose (opus)
+- **Task**: Auditar en paralelo (solo lectura) la coherencia del plan de 6 arreglos + 3 decisiones de Felipe
+- **Feature ref**: FEAT-007
+- **Plan ref**: none
+- **Status**: dispatched
+
+### 2026-08-13T12:46:07-05:00 — general-purpose (opus) returned
+- **Status**: DONE_WITH_CONCERNS
+- **Report**: docs/slate/progress/subagents/feat-007-2-validate-plan-coherence-DONE.md
+- **Concerns**: el arreglo aprobado del guardián (300s→900s) no cerraba el modo de fallo real del incidente — el candado se borraba y el heartbeat no lo recreaba. Encontró 5 correcciones concretas, todas YAGNI-justificadas
+
+Corregidas las 5 vía `SendMessage` al agente de ejecución, que seguía corriendo — no se esperó una nueva ronda de aprobación de Felipe porque son correcciones a trabajo ya aprobado, no alcance nuevo.
+
+### 2026-08-13T13:08:11-05:00 — general-purpose (sonnet) returned
+- **Status**: DONE
+- **Report**: docs/slate/progress/subagents/feat-007-3-implement-fixes-DONE.md
+- **Concerns**: la carrera de `reserve-id.sh` y el recreate-lock del heartbeat se probaron con datos simulados dentro de la sesión, no con dos sesiones de Claude Code genuinamente paralelas en tiempo real
+
+Verificación independiente por la sesión principal: `for f in tests/*.sh; do bash "$f"; done` → 29/29 en verde. Lectura manual de los diffs de `session-heartbeat.sh`, `session-guardian.sh` y `CHANGELOG.md` para confirmar que el código y el changelog no sobre-prometen. FEAT-007 movida a `done.md` con `Verified: 2026-08-13`.
+
+Se avisó a las dos sesiones hermanas activas en phlou-app (el origen del reporte y otra que confirmó en vivo el mismo patrón de incidente) sobre el arreglo y sus límites conocidos (protección por-repo/por-máquina, no entre clones ni CI; necesitan reinstalar/actualizar Slate para recibir 1.9.0).

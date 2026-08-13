@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # El guardian debe denegar las operaciones que reescriben el arbol de trabajo
 # cuando un peer VIVO comparte la MISMA carpeta. En carpetas distintas no
-# interfiere. Con un lock envejecido, avisa en vez de bloquear.
+# interfiere. Desde 1.9.0 FRESH == TTL (900s): ya no hay banda tibia de
+# aviso-en-vez-de-bloqueo; cualquier peer dentro del TTL deniega igual.
 set -e
 trap 'echo "FAIL at line $LINENO"' ERR
 
@@ -104,15 +105,16 @@ OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
 echo "PASS: una sesion sola nunca se bloquea"
 rm -rf "$REPO"
 
-# --- 6. peer TIBIO (>300s, <900s) -> avisa, no bloquea ---
+# --- 6. peer envejecido pero dentro del TTL (900s) -> DENEGADO, no solo aviso ---
+# 1.9.0: se elimino la banda intermedia (deny -> warn) de 300-900s; FRESH == TTL,
+# asi que cualquier peer vivo dentro del TTL deniega igual que uno recien creado.
 REPO=$(setup_repo)
 REAL=$(cd "$REPO" && pwd -P)
 write_peer_lock "$REPO" "peer" "$REAL"
 age_lock "$REPO/.git/slate-sessions/peer.lock" 600
 OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
-is_deny "$OUT" && { echo "FAIL: peer tibio (600s) no debe denegar: $OUT"; exit 1; }
-is_warn "$OUT" || { echo "FAIL: peer tibio (600s) debe avisar: $OUT"; exit 1; }
-echo "PASS: peer tibio avisa sin bloquear"
+is_deny "$OUT" || { echo "FAIL: peer con 600s de antiguedad (dentro del TTL) debe denegar, no solo avisar: $OUT"; exit 1; }
+echo "PASS: peer envejecido pero dentro del TTL deniega (banda tibia eliminada)"
 rm -rf "$REPO"
 
 # --- 7. peer RANCIO (>900s) -> ignorado por completo ---
@@ -301,6 +303,22 @@ is_deny "$OUT" && { echo "FAIL: un cwd de peer relativo ('.') no debe denegar: $
 [ -s "$ERRFILE" ] && { echo "FAIL: un cwd de peer relativo no debe lanzar excepcion: $(cat "$ERRFILE")"; rm -f "$ERRFILE"; exit 1; }
 rm -f "$ERRFILE"
 echo "PASS: un cwd de peer relativo se descarta en vez de resolverse contra el proceso del hook (con control positivo)"
+rm -rf "$REPO"
+
+# --- 18. el mensaje de deny nombra la RUTA del archivo de candado ---
+# 1.9.0: con FRESH == TTL, un candado fantasma (sesion que se cayo sin cerrar
+# limpio) ahora puede bloquear hasta 15 minutos seguidos. El mensaje debe dar
+# la ruta del archivo para que alguien pueda borrarlo a mano si sabe que es un
+# fantasma -- antes solo daba un id truncado a 8 caracteres, sin forma de
+# ubicar el archivo real.
+REPO=$(setup_repo)
+REAL=$(cd "$REPO" && pwd -P)
+write_peer_lock "$REPO" "peer" "$REAL"
+OUT=$(payload "yo" "$REAL" "git checkout otra" | bash "$HOOK")
+is_deny "$OUT" || { echo "FAIL: control positivo no denego: $OUT"; exit 1; }
+echo "$OUT" | grep -qF "$REAL/.git/slate-sessions/peer.lock" \
+  || { echo "FAIL: el mensaje de deny no incluye la ruta del archivo de candado: $OUT"; exit 1; }
+echo "PASS: el mensaje de deny incluye la ruta del archivo de candado"
 rm -rf "$REPO"
 
 echo "All guardian tree-op tests passed."

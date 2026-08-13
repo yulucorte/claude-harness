@@ -24,7 +24,10 @@ SG_JSON="$STDIN_JSON" python3 - <<'PY'
 import sys, os, json, re, shlex, subprocess, time, glob
 
 TTL = 900  # seconds; matches session-lock.sh stale-lock reaping
-FRESH = 300  # s. Peer con lock mas nuevo que esto = vivo casi con certeza.
+FRESH = 900  # s. 1.9.0: igualado al TTL -- se elimina la banda tibia de
+# 300-900s donde un peer vivo solo generaba aviso en vez de bloqueo. Con
+# FRESH == TTL, todo peer que sobrevive el filtro de "foreign" (ya acotado
+# a <= TTL) deniega; el warn de la regla 0 queda sin caso de uso real.
 # Asignaciones de entorno que preceden al comando: 'FOO=bar git status'.
 ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -470,14 +473,22 @@ def main():
             age = int(now - freshest.get("_mtime", 0))
             if age <= FRESH:
                 tree_denied = True
+                # FRESH == TTL desde 1.9.0: un candado FANTASMA (sesion caida
+                # sin SessionEnd limpio) puede bloquear hasta 15 minutos
+                # seguidos con esto. Se nombra la ruta del archivo para que
+                # alguien pueda borrarlo a mano si sabe que es un fantasma --
+                # el id truncado a 8 caracteres no bastaba para ubicarlo.
+                lock_path = os.path.join(lock_dir, freshest["_id"] + ".lock")
                 denies.append(
                     "Otra sesion de Claude Code esta viva en ESTA MISMA carpeta (candado %s, "
                     "actividad hace %ss). 'git %s' reescribiria o borraria en disco los archivos "
                     "que esa sesion esta editando ahora mismo, sin que su agente se entere. "
                     "Bloqueado por session-guardian. Sigue trabajando sobre el arbol tal como "
                     "esta (editar archivos distintos es seguro), o abre una sesion de Claude "
-                    "Code NUEVA en otra carpeta si necesitas trabajar en paralelo de verdad."
-                    % (freshest["_id"][:8], age, tree_ops[0])
+                    "Code NUEVA en otra carpeta si necesitas trabajar en paralelo de verdad. "
+                    "Si sabes que esa sesion ya no existe (candado fantasma), puedes borrar "
+                    "%s a mano."
+                    % (freshest["_id"][:8], age, tree_ops[0], lock_path)
                 )
             else:
                 warns.append(

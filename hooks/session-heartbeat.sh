@@ -88,7 +88,38 @@ def main():
 
     lock = os.path.join(gcd, "slate-sessions", sid + ".lock")
     if not os.path.isfile(lock):
-        sys.exit(0)  # this session never claimed a lock; nothing to refresh
+        # 1.9.0: RECREATE instead of doing nothing. session-lock.sh and
+        # session-lock-cleanup.sh both reap locks older than 15min
+        # (find -mmin +15 -delete) so dead sessions don't pile up forever.
+        # But a session that is genuinely alive and simply hasn't called a
+        # tool in >15min (thinking, waiting on the user, one long-running
+        # tool) has ITS lock reaped too by a peer merely starting or ending.
+        # Leaving this as a no-op made that session invisible to
+        # session-guardian.sh from then on: a peer could checkout/reset/stash
+        # over its live work with no deny and no warn. Recreate with the same
+        # shape session-lock.sh writes, so the next tree-op check sees it again.
+        try:
+            os.makedirs(os.path.dirname(lock), exist_ok=True)
+            br = git("branch", "--show-current").stdout.strip()
+            hd = git("rev-parse", "HEAD").stdout.strip()
+            try:
+                rp = os.path.realpath(cwd)
+            except Exception:
+                rp = cwd
+            files = []
+            if written:
+                files = [{"path": written, "ts": int(time.time())}]
+            data = {
+                "branch": br, "worktree": "", "head": hd,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "cwd": rp, "files": files,
+            }
+            tmp = lock + ".tmp"
+            json.dump(data, open(tmp, "w"))
+            os.replace(tmp, lock)
+        except Exception:
+            pass
+        sys.exit(0)
 
     # 1. liveness: refresh mtime
     try:

@@ -25,13 +25,21 @@ See `docs/bug-format.md` for the full reference. Minimum:
 
 ## Lifecycle
 
-1. **Report**: user describes a bug. Assign next `BUG-XXX` with a bounded search
+1. **Report**: user describes a bug. Assign next `BUG-XXX` with a bounded
+   search over the live files AND pending reservations from other branches
    — do NOT read the files whole:
 
        grep -hoE 'BUG-[0-9]+' docs/slate/bugs/open.md docs/slate/bugs/fixed.md 2>/dev/null \
          | grep -oE '[0-9]+' | sort -n | tail -1
+       ls "$(git rev-parse --git-common-dir)/slate-ids/BUG" 2>/dev/null | sort -n | tail -1
 
-   Next ID = that number + 1, zero-padded to 3 digits. Empty output → `BUG-001`.
+   Candidate ID = the HIGHER of those two numbers + 1, zero-padded to 3
+   digits. Empty output from both → `BUG-001`.
+
+   Reserve it: `$CLAUDE_PLUGIN_ROOT/scripts/reserve-id.sh BUG-012`. Exit 0 →
+   use it. Non-zero exit → another branch/session reserved it first; retry
+   with the next candidate until a reservation succeeds.
+
    Append to `docs/slate/bugs/open.md` with `Root cause: unknown` and `Fix: none` if not
    yet diagnosed. Only live files are scanned; `fixed-archive-*.md` is never
    needed (archiving moves oldest entries only — see `docs/archiving.md`).
@@ -45,9 +53,12 @@ See `docs/bug-format.md` for the full reference. Minimum:
 
 ## ID assignment
 
-Use the bounded search in step 1 of the Lifecycle above (grep over
-`docs/slate/bugs/open.md docs/slate/bugs/fixed.md`, take `max + 1`). Never read the files whole. IDs
-are immutable and independent of `FEAT-XXX` numbering.
+Use the bounded search AND reservation check in step 1 of the Lifecycle above
+(grep over `docs/slate/bugs/open.md docs/slate/bugs/fixed.md` plus
+`.git/slate-ids/BUG/`, take the higher `max + 1`, reserve it with
+`reserve-id.sh` before using it). Never read the files whole. IDs are
+immutable and independent of `FEAT-XXX` numbering — reservations are kept in
+separate `slate-ids/FEAT/` and `slate-ids/BUG/` buckets for the same reason.
 
 ## Archiving fixed.md
 

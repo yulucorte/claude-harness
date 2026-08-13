@@ -33,6 +33,11 @@ slate does NOT replace Superpowers.
 ## Anti-patterns
 
 - DO NOT introduce JSON, YAML, or SQLite alternatives. Markdown is the contract.
+  The ONE exception: `.git/slate-ids/` (see `scripts/reserve-id.sh`), a set of
+  empty marker directories used to atomically reserve a `FEAT-NNN`/`BUG-NNN`
+  before it is written anywhere. It is not a product document — it is an
+  internal technical marker: invisible, and never version-controlled (it
+  lives inside `.git`, which is not itself tracked by git).
 - DO NOT edit entries in `done.md`. Create a successor with `Supersedes: FEAT-XXX`.
 - DO NOT skip `tracking-progress`. Commit messages are too terse for cross-session recovery.
 - DO NOT read all four `docs/slate/features/*.md` files preemptively. Use what the hook injected plus targeted reads.
