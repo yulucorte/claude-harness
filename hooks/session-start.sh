@@ -228,6 +228,18 @@ ${VERSION_LINE}"
     ;;
 esac
 
+# El formato ENVUELTO no es cosmetico. El plano ({"additionalContext": ...})
+# se ejecuta sin error pero Claude Code lo DESCARTA en silencio cuando varios
+# plugins cablean SessionStart a la vez — y ese es el caso normal, no el raro:
+# Superpowers cablea SessionStart (matcher startup|clear|compact) y slate se
+# define en plugin.json como su companion. Medido en una sesion real leyendo el
+# transcript .jsonl: el bloque de Superpowers (envuelto) llega como attachment,
+# el de slate (plano) no aparece jamas. Todo lo de aqui abajo — indice de
+# in-progress, estado en vuelo, historial, bugs, version, contadores — se
+# perdia. Mismo modo de fallo que pre-compact.sh (corre, no falla, nadie lee),
+# que 1.8.0 borro por eso mismo. session-lock.sh ya emitia envuelto desde
+# FEAT-001, donde se documento el bug sin corregirlo aqui por alcance.
 CONTEXT_JSON=$(printf '%s' "$CONTEXT" | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" 2>/dev/null \
   || printf '"%s"' "$(printf '%s' "$CONTEXT" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr '\n' ' ')")
-printf '{"additionalContext": %s}\n' "$CONTEXT_JSON" 2>/dev/null || exit 0
+printf '{"hookSpecificOutput": {"hookEventName": "SessionStart", "additionalContext": %s}}\n' \
+  "$CONTEXT_JSON" 2>/dev/null || exit 0

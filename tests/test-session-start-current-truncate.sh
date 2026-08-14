@@ -13,9 +13,11 @@ NOTE="(truncado — abre docs/slate/progress/current.md si necesitas el resto)"
 
 # The hook JSON-escapes additionalContext (em-dash becomes —), so a raw
 # grep -F for the literal note never matches. Decode first, like a real
-# consumer of this hook's stdout would.
+# consumer of this hook's stdout would — which means reading the WRAPPED
+# envelope: Claude Code discards the flat {"additionalContext": ...} form when
+# several plugins wire SessionStart at once (see test-session-start-wrapped-output.sh).
 decode_context() {
-  python3 -c "import sys,json; print(json.load(sys.stdin).get('additionalContext',''))"
+  python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"
 }
 
 # --- Test 1: current.md with 150 lines -> only last 100 injected, with note ---
