@@ -12,8 +12,11 @@ trap 'echo "FAIL at line $LINENO"; rm -rf "$TMPDIR_PROJECT" "$TMPDIR_PLUGIN" "$T
 PLUGIN_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 HOOK="$PLUGIN_ROOT/hooks/session-start.sh"
 
+# Reads the WRAPPED envelope on purpose: the flat {"additionalContext": ...}
+# form is discarded by Claude Code when several plugins wire SessionStart at
+# once (see test-session-start-wrapped-output.sh).
 decode_context() {
-  python3 -c "import sys,json; print(json.load(sys.stdin).get('additionalContext',''))"
+  python3 -c "import sys,json; print(json.load(sys.stdin)['hookSpecificOutput']['additionalContext'])"
 }
 
 setup_project() {
